@@ -71,7 +71,7 @@ public class SelectSqlRenderer {
         sb.append("-- targetTable: ").append(target).append("\n");
         sb.append("-- sourceTable: ").append(source).append("\n");
         if (!table.getLeftJoins().isEmpty()) {
-            sb.append("-- leftJoins: ").append(table.getLeftJoins().size()).append("\n");
+            sb.append("-- joins: ").append(table.getLeftJoins().size()).append("\n");
         }
         sb.append("-- DO NOT EDIT manually unless necessary\n\n");
         sb.append("SELECT\n");
@@ -80,7 +80,7 @@ public class SelectSqlRenderer {
         }
         sb.append("FROM ").append(source).append(" ").append(primaryAlias).append("\n");
         for (LeftJoinSpec lj : table.getLeftJoins()) {
-            sb.append("LEFT JOIN ").append(lj.getTableName()).append(" ").append(lj.getAlias())
+            sb.append(lj.sqlKeyword()).append(" ").append(lj.getTableName()).append(" ").append(lj.getAlias())
                     .append(" ON ").append(lj.getOnPredicate()).append("\n");
         }
         sb.append(renderWhere(table, primaryAlias));

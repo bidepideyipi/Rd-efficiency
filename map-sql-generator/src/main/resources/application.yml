@@ -20,3 +20,5 @@ mig:
   join-condition-conflict: error
   require-sql-rule-when-present: false
   write-meta: true
+  scan:
+    default-project-dir: ""

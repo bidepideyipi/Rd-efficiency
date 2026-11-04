@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>映射 SQL 生成器</title>
+  <title>研发效能工具</title>
   <style>
     :root {
       --bg: #f3f5f7;
@@ -15,6 +15,7 @@
       --accent-soft: #e6f4ef;
       --danger: #b42318;
       --ok: #067647;
+      --nav: #152028;
     }
     * { box-sizing: border-box; }
     body {
@@ -27,10 +28,51 @@
         var(--bg);
       min-height: 100vh;
     }
+    .layout {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 100vh;
+    }
+    nav.side {
+      background: var(--nav);
+      color: #e8eef5;
+      padding: 28px 16px;
+    }
+    nav.side .brand {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 12px 24px;
+    }
+    nav.side .brand small {
+      display: block;
+      font-weight: 400;
+      color: #9aa8b6;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    nav.side button.tool {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: #c5d0db;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    nav.side button.tool.active,
+    nav.side button.tool:hover {
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+    }
     main {
       max-width: 960px;
       margin: 0 auto;
       padding: 40px 20px 64px;
+      width: 100%;
     }
     h1 {
       margin: 0 0 8px;
@@ -147,57 +189,126 @@
       font-size: 12px;
       margin-left: 8px;
     }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .summary {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .summary strong { color: var(--text); }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      nav.side {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 16px;
+      }
+      nav.side .brand { margin: 0 12px 0 0; flex: 1 1 100%; }
+      nav.side button.tool { width: auto; }
+    }
   </style>
 </head>
 <body>
-<main>
-  <h1>映射 SQL 生成器 <span class="pill">V0.4 Excel → 一表一 SQL</span></h1>
-  <p class="sub">上传映射 Excel，配置导出目录，按目标表生成带时间占位符的 SELECT 文件。</p>
+<div class="layout">
+  <nav class="side">
+    <div class="brand">研发效能工具<small>本地工程效率套件</small></div>
+    <button type="button" class="tool active" data-tool="sql">Excel → SQL</button>
+    <button type="button" class="tool" data-tool="scan">代码扫描 dealcode</button>
+  </nav>
+  <main>
+    <section id="panel-sql" class="panel active">
+      <h1>映射 SQL 生成器 <span class="pill">Excel → 一表一 SQL</span></h1>
+      <p class="sub">上传映射 Excel，配置导出目录，按目标表生成带时间占位符的 SELECT 文件。</p>
 
-  <section class="card">
-    <label>SQL 文件输出目录</label>
-    <div class="row">
-      <div>
-        <input id="exportDir" type="text" placeholder="/path/to/sql/map"/>
-      </div>
-      <button class="secondary" type="button" id="btnCheckDir">检测目录</button>
-    </div>
-    <p id="dirStatus" class="sub" style="margin:8px 0 0"></p>
-  </section>
+      <section class="card">
+        <label>SQL 文件输出目录</label>
+        <div class="row">
+          <div>
+            <input id="exportDir" type="text" placeholder="/path/to/sql/map"/>
+          </div>
+          <button class="secondary" type="button" id="btnCheckDir">检测目录</button>
+        </div>
+        <p id="dirStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
 
-  <section class="card">
-    <label>上传映射 Excel（.xlsx）</label>
-    <div class="drop" id="drop">
-      <p>拖拽文件到此处，或点击选择</p>
-      <input id="file" type="file" accept=".xlsx" style="margin-top:10px"/>
-      <p id="fileInfo" class="sub" style="margin-top:10px"></p>
-    </div>
-  </section>
+      <section class="card">
+        <label>上传映射 Excel（.xlsx）</label>
+        <div class="drop" id="drop">
+          <p>拖拽文件到此处，或点击选择</p>
+          <input id="file" type="file" accept=".xlsx" style="margin-top:10px"/>
+          <p id="fileInfo" class="sub" style="margin-top:10px"></p>
+        </div>
+      </section>
 
-  <section class="card">
-    <label>目标表（业务 Sheet）</label>
-    <div class="toolbar">
-      <button class="secondary" type="button" id="btnAll">全选</button>
-      <button class="secondary" type="button" id="btnNone">清空</button>
-    </div>
-    <div class="sheets" id="sheets"><em style="color:#5b6775">请先上传 Excel</em></div>
-    <div class="checks">
-      <label class="item"><input type="checkbox" id="overwrite" checked/> 覆盖已存在文件</label>
-      <label class="item"><input type="checkbox" id="stopOnError"/> 遇错即停</label>
-    </div>
-    <button type="button" id="btnGenerate" disabled>生成 SQL</button>
-  </section>
+      <section class="card">
+        <label>目标表（业务 Sheet）</label>
+        <div class="toolbar">
+          <button class="secondary" type="button" id="btnAll">全选</button>
+          <button class="secondary" type="button" id="btnNone">清空</button>
+        </div>
+        <div class="sheets" id="sheets"><em style="color:#5b6775">请先上传 Excel</em></div>
+        <div class="checks">
+          <label class="item"><input type="checkbox" id="overwrite" checked/> 覆盖已存在文件</label>
+          <label class="item"><input type="checkbox" id="stopOnError"/> 遇错即停</label>
+        </div>
+        <button type="button" id="btnGenerate" disabled>生成 SQL</button>
+      </section>
 
-  <section class="card">
-    <label>生成结果</label>
-    <pre id="result">等待操作…</pre>
-  </section>
-</main>
+      <section class="card">
+        <label>生成结果</label>
+        <pre id="result">等待操作…</pre>
+      </section>
+    </section>
+
+    <section id="panel-scan" class="panel">
+      <h1>代码扫描 <span class="pill">.fc → dealcode CSV</span></h1>
+      <p class="sub">扫描工程目录下的 .fc 文件，提取 paramList 中的 dealcode / dealmsg；相对路径一级为服务名，二级为模块名。</p>
+
+      <section class="card">
+        <label>工程根目录</label>
+        <div class="row">
+          <div>
+            <input id="projectDir" type="text" placeholder="/path/to/project"/>
+          </div>
+          <button class="secondary" type="button" id="btnCheckProject">检测目录</button>
+        </div>
+        <p id="projectStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <div class="toolbar">
+          <button type="button" id="btnScan">开始扫描</button>
+          <button class="secondary" type="button" id="btnDownloadCsv" disabled>下载 CSV</button>
+        </div>
+        <div class="summary" id="scanSummary"></div>
+        <label>扫描结果（CSV 预览，含总览）</label>
+        <pre id="scanResult">等待操作…</pre>
+      </section>
+    </section>
+  </main>
+</div>
 <script>
   let uploadId = null;
+  let lastProjectDir = '';
   const $ = (id) => document.getElementById(id);
 
-  async function init() {
+  document.querySelectorAll('nav.side button.tool').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav.side button.tool').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tool = btn.getAttribute('data-tool');
+      document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+      $('panel-' + tool).classList.add('active');
+    });
+  });
+
+  async function initSql() {
     const res = await fetch('/api/config/export-dir');
     const data = await res.json();
     $('exportDir').value = data.defaultExportDir || '';
@@ -301,7 +412,6 @@
       const msgs = t.messages || [];
       const errors = msgs.filter(m => String(m).startsWith('ERROR'));
       const others = msgs.filter(m => !String(m).startsWith('ERROR'));
-      // 失败时优先完整展示 ERROR（含 Excel 行列）；其余最多 5 条
       (t.success ? others.slice(0, 5) : errors.concat(others.slice(0, 5))).forEach(m => lines.push('  ' + m));
       if (t.success && others.length > 5) lines.push('  ...');
       if (!t.success && others.length > 5) lines.push('  ... 另有 WARN/INFO ' + (others.length - 5) + ' 条');
@@ -310,7 +420,90 @@
     $('result').textContent = lines.join('\n');
   };
 
-  init().catch(e => $('dirStatus').textContent = e.message);
+  async function initScan() {
+    const res = await fetch('/api/scan/dealcode/config');
+    const data = await res.json();
+    if (data.defaultProjectDir) {
+      $('projectDir').value = data.defaultProjectDir;
+    }
+    if (data.status) {
+      renderProjectStatus(data.status);
+    }
+  }
+
+  function renderProjectStatus(status) {
+    if (!status) return;
+    if (status.ok) {
+      $('projectStatus').innerHTML = '<span class="ok">目录可用：</span>' + status.path;
+    } else {
+      $('projectStatus').innerHTML = '<span class="err">不可用：</span>' + (status.error || status.path || '');
+    }
+  }
+
+  $('btnCheckProject').onclick = async () => {
+    const res = await fetch('/api/scan/dealcode/check-dir', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ path: $('projectDir').value })
+    });
+    const data = await res.json();
+    renderProjectStatus(data);
+  };
+
+  $('btnScan').onclick = async () => {
+    lastProjectDir = $('projectDir').value;
+    $('scanResult').textContent = '扫描中…';
+    $('scanSummary').innerHTML = '';
+    $('btnDownloadCsv').disabled = true;
+    const res = await fetch('/api/scan/dealcode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ projectDir: lastProjectDir })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      $('scanResult').textContent = data.error || JSON.stringify(data, null, 2);
+      return;
+    }
+    $('scanSummary').innerHTML =
+      '<span>文件 <strong>' + data.fileCount + '</strong></span>' +
+      '<span>命中 <strong>' + data.hitCount + '</strong></span>' +
+      '<span>失败文件 <strong>' + data.failedFiles + '</strong></span>';
+    const preview = (data.csvPreview || '').replace(/^\uFEFF/, '');
+    const warnLines = (data.warnings || []).length
+      ? '\n\n--- warnings ---\n' + data.warnings.join('\n')
+      : '';
+    $('scanResult').textContent = preview + warnLines;
+    $('btnDownloadCsv').disabled = false;
+  };
+
+  $('btnDownloadCsv').onclick = async () => {
+    const dir = lastProjectDir || $('projectDir').value;
+    const res = await fetch('/api/scan/dealcode/export', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ projectDir: dir })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || '下载失败');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'dealcode-scan.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  Promise.all([initSql(), initScan()]).catch(e => {
+    $('dirStatus').textContent = e.message;
+    $('projectStatus').textContent = e.message;
+  });
 </script>
 </body>
 </html>

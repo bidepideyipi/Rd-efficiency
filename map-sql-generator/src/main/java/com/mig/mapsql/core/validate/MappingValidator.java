@@ -166,7 +166,7 @@ public class MappingValidator {
             }
             if (!joined.contains(st)) {
                 messages.add(cellErr(tableName, null, ExcelColumns.JOIN_CONDITION, ExcelColumns.H_JOIN,
-                        null, "副源表 " + st + " 未在「库表关联条件」中配置 LEFT JOIN"));
+                        null, "副源表 " + st + " 未在「库表关联条件」中配置 JOIN（LEFT/INNER）"));
             }
         }
 
@@ -179,7 +179,7 @@ public class MappingValidator {
             }
         }
         if (table.isLeftJoinConflict()) {
-            String msg = "同一副表存在多条不一致的 LEFT JOIN ON 条件";
+            String msg = "同一副表存在多条不一致的 JOIN（类型或 ON 条件）";
             if ("error".equalsIgnoreCase(properties.getJoinConditionConflict())) {
                 messages.add(cellErr(tableName, null, ExcelColumns.JOIN_CONDITION, ExcelColumns.H_JOIN, null, msg));
             } else {
@@ -188,7 +188,7 @@ public class MappingValidator {
         }
         for (String uj : table.getUnsupportedJoins()) {
             messages.add(cellWarn(tableName, null, ExcelColumns.JOIN_CONDITION, ExcelColumns.H_JOIN,
-                    null, "暂不支持的关联写法（仅支持 LEFT JOIN）: " + abbreviate(uj)));
+                    null, "暂不支持的关联写法（支持 LEFT JOIN / INNER JOIN）: " + abbreviate(uj)));
         }
         for (String note : table.getRelationNotes()) {
             messages.add(cellWarn(tableName, null, ExcelColumns.JOIN_CONDITION, ExcelColumns.H_JOIN, null, note));

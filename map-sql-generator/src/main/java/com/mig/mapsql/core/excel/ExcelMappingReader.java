@@ -150,12 +150,6 @@ public class ExcelMappingReader {
 
     void finalizeRelations(TableMapping table, List<String> joinRaws) {
         String primaryAlias = properties.getSourceAlias();
-        String primary = detectPrimarySourceTable(table);
-        table.setSourceTable(primary);
-
-        if (!Strings.isBlank(primary)) {
-            table.getTableAliases().put(primary.toUpperCase(Locale.ROOT), primaryAlias);
-        }
 
         if (joinRaws != null && !joinRaws.isEmpty()) {
             table.setJoinConditionRaw(String.join(" | ", joinRaws));
@@ -163,6 +157,18 @@ public class ExcelMappingReader {
 
         JoinConditionParser.RelationParseResult parsed =
                 JoinConditionParser.parseAll(joinRaws, primaryAlias);
+
+        // 优先采用「select * from X」中的主表；否则按字段出现频次
+        String primary = preferFromTableAsPrimary(table, parsed);
+        if (Strings.isBlank(primary)) {
+            primary = detectPrimarySourceTable(table);
+        }
+        table.setSourceTable(primary);
+
+        if (!Strings.isBlank(primary)) {
+            table.getTableAliases().put(primary.toUpperCase(Locale.ROOT), primaryAlias);
+        }
+
         table.setJoinPredicate(parsed.getWherePredicate());
         table.setWhereConflict(parsed.isWhereConflict());
         table.setLeftJoinConflict(parsed.isLeftJoinConflict());
@@ -176,6 +182,38 @@ public class ExcelMappingReader {
         for (LeftJoinSpec lj : table.getLeftJoins()) {
             table.getTableAliases().put(lj.getTableName().toUpperCase(Locale.ROOT), lj.getAlias());
         }
+    }
+
+    /**
+     * 若关联条件写了 select * from X，且 X 也出现在字段源表中，则 X 作为主表。
+     */
+    private String preferFromTableAsPrimary(TableMapping table,
+                                            JoinConditionParser.RelationParseResult parsed) {
+        if (parsed.getWhereSourceTables().isEmpty()) {
+            return null;
+        }
+        Set<String> fieldTables = new HashSet<String>();
+        Map<String, String> canonical = new HashMap<String, String>();
+        for (FieldMapping f : table.getFields()) {
+            if (f.getMappingType() == MappingType.SKIP || Strings.isBlank(f.getSourceTable())) {
+                continue;
+            }
+            String raw = f.getSourceTable().trim();
+            String key = raw.toUpperCase(Locale.ROOT);
+            fieldTables.add(key);
+            canonical.put(key, raw);
+        }
+        for (String fromTable : parsed.getWhereSourceTables()) {
+            if (Strings.isBlank(fromTable)) {
+                continue;
+            }
+            String key = fromTable.trim().toUpperCase(Locale.ROOT);
+            if (fieldTables.contains(key)) {
+                return canonical.get(key);
+            }
+        }
+        // 字段里没有同名时，仍采用 select * from 的表名（原文大小写）
+        return parsed.getWhereSourceTables().get(0);
     }
 
     private String detectPrimarySourceTable(TableMapping table) {
