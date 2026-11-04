@@ -1,0 +1,82 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Maven / Java
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# IDE - IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# IDE - Eclipse
+.classpath
+.project
+.settings/
+.bin/
+.factorypath
+
+# IDE - VS Code / Cursor
+.vscode/
+*.code-workspace
+
+# IDE - NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# Spring Boot
+*.log
+spring-boot-devtools.properties
+
+# Local / secrets
+.env
+.env.*
+!.env.example
+*.local.yml
+*.local.yaml
+application-local.yml
+application-local.properties
+
+# Generator runtime output
+uploads/
+export/
+out/
+tmp/
+temp/
+*.sql.bak
+
+# Python (scripts helpers, if any)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs & misc
+logs/
+*.log
+*.tmp
+*.swp
+*~

@@ -1,0 +1,218 @@
+package com.mig.mapsql.core.excel;
+
+import com.mig.mapsql.config.GeneratorProperties;
+import com.mig.mapsql.core.model.FieldMapping;
+import com.mig.mapsql.core.model.LeftJoinSpec;
+import com.mig.mapsql.core.model.MappingType;
+import com.mig.mapsql.core.model.TableMapping;
+import com.mig.mapsql.core.util.JoinConditionParser;
+import com.mig.mapsql.core.util.Strings;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+@Component
+public class ExcelMappingReader {
+
+    private static final Set<String> SKIP_SHEETS = Collections.unmodifiableSet(
+            new HashSet<String>(Arrays.asList("封面", "文档说明", "目录", "修订记录")));
+
+    private final GeneratorProperties properties;
+    private final DataFormatter formatter = new DataFormatter();
+
+    public ExcelMappingReader(GeneratorProperties properties) {
+        this.properties = properties;
+    }
+
+    public List<String> listBusinessSheets(Path excelPath) throws IOException {
+        try (InputStream in = Files.newInputStream(excelPath); Workbook wb = new XSSFWorkbook(in)) {
+            List<String> names = new ArrayList<String>();
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                String name = wb.getSheetName(i);
+                if (isBusinessSheet(name)) {
+                    names.add(name);
+                }
+            }
+            return names;
+        }
+    }
+
+    public boolean isBusinessSheet(String name) {
+        if (Strings.isBlank(name)) {
+            return false;
+        }
+        String n = name.trim();
+        if (SKIP_SHEETS.contains(n)) {
+            return false;
+        }
+        if (n.contains("说明")) {
+            return false;
+        }
+        return true;
+    }
+
+    public List<TableMapping> readTables(Path excelPath, List<String> tableFilter) throws IOException {
+        try (InputStream in = Files.newInputStream(excelPath); Workbook wb = new XSSFWorkbook(in)) {
+            List<TableMapping> result = new ArrayList<TableMapping>();
+            Set<String> filter = tableFilter == null || tableFilter.isEmpty()
+                    ? null
+                    : new LinkedHashSet<String>(tableFilter);
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                Sheet sheet = wb.getSheetAt(i);
+                String name = sheet.getSheetName();
+                if (!isBusinessSheet(name)) {
+                    continue;
+                }
+                if (filter != null && !filter.contains(name)) {
+                    continue;
+                }
+                result.add(readSheet(sheet));
+            }
+            return result;
+        }
+    }
+
+    public TableMapping readSheet(Sheet sheet) {
+        TableMapping table = new TableMapping();
+        table.setSheetName(sheet.getSheetName());
+        table.setTargetTable(sheet.getSheetName());
+
+        int headerRowIdx = properties.getHeaderRow() - 1;
+        Map<String, String> joinCandidates = new LinkedHashMap<String, String>();
+
+        for (int r = headerRowIdx + 1; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) {
+                continue;
+            }
+            String seq = cell(row, 0);
+            if (Strings.isBlank(seq)) {
+                continue;
+            }
+            FieldMapping field = new FieldMapping();
+            field.setExcelRow(r + 1);
+            field.setSeq(seq);
+            field.setTargetTable(cell(row, 1));
+            field.setTargetColumn(cell(row, 2));
+            field.setTargetComment(cell(row, 3));
+            field.setNullable(cell(row, 4));
+            field.setTargetType(cell(row, 5));
+            field.setTargetLength(cell(row, 6));
+            field.setMappingTypeRaw(cell(row, 11));
+            field.setMappingType(MappingType.fromLabel(field.getMappingTypeRaw()));
+            field.setSourceSystem(cell(row, 12));
+            field.setSourceTable(cell(row, 13));
+            field.setSourceColumn(cell(row, 14));
+            field.setSourceType(cell(row, 16));
+            field.setSourceLength(cell(row, 17));
+            field.setDefaultValue(cell(row, 18));
+            field.setRuleExpression(cell(row, 21));
+            field.setJoinCondition(cell(row, 22));
+            field.setRemark(cell(row, 23));
+            table.getFields().add(field);
+
+            if (!Strings.isBlank(field.getJoinCondition())) {
+                joinCandidates.put(JoinConditionParser.normalizeKey(field.getJoinCondition()),
+                        field.getJoinCondition().trim());
+            }
+            if (Strings.isBlank(table.getSourceSystem()) && !Strings.isBlank(field.getSourceSystem())) {
+                table.setSourceSystem(field.getSourceSystem().trim());
+            }
+            if (Strings.isBlank(table.getTargetTable()) && !Strings.isBlank(field.getTargetTable())) {
+                table.setTargetTable(field.getTargetTable().trim());
+            }
+        }
+
+        finalizeRelations(table, new ArrayList<String>(joinCandidates.values()));
+        return table;
+    }
+
+    void finalizeRelations(TableMapping table, List<String> joinRaws) {
+        String primaryAlias = properties.getSourceAlias();
+        String primary = detectPrimarySourceTable(table);
+        table.setSourceTable(primary);
+
+        if (!Strings.isBlank(primary)) {
+            table.getTableAliases().put(primary.toUpperCase(Locale.ROOT), primaryAlias);
+        }
+
+        if (joinRaws != null && !joinRaws.isEmpty()) {
+            table.setJoinConditionRaw(String.join(" | ", joinRaws));
+        }
+
+        JoinConditionParser.RelationParseResult parsed =
+                JoinConditionParser.parseAll(joinRaws, primaryAlias);
+        table.setJoinPredicate(parsed.getWherePredicate());
+        table.setWhereConflict(parsed.isWhereConflict());
+        table.setLeftJoinConflict(parsed.isLeftJoinConflict());
+        table.getLeftJoins().clear();
+        table.getLeftJoins().addAll(parsed.getLeftJoins());
+        table.getUnsupportedJoins().clear();
+        table.getUnsupportedJoins().addAll(parsed.getUnsupportedJoins());
+        table.getRelationNotes().clear();
+        table.getRelationNotes().addAll(parsed.getNotes());
+
+        for (LeftJoinSpec lj : table.getLeftJoins()) {
+            table.getTableAliases().put(lj.getTableName().toUpperCase(Locale.ROOT), lj.getAlias());
+        }
+    }
+
+    private String detectPrimarySourceTable(TableMapping table) {
+        Map<String, Integer> counts = new HashMap<String, Integer>();
+        Map<String, String> canonical = new HashMap<String, String>();
+        for (FieldMapping f : table.getFields()) {
+            if (f.getMappingType() == MappingType.SKIP) {
+                continue;
+            }
+            if (Strings.isBlank(f.getSourceTable())) {
+                continue;
+            }
+            String raw = f.getSourceTable().trim();
+            String key = raw.toUpperCase(Locale.ROOT);
+            canonical.put(key, raw);
+            Integer c = counts.get(key);
+            counts.put(key, c == null ? 1 : c + 1);
+        }
+        String bestKey = null;
+        int best = -1;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() > best) {
+                best = e.getValue();
+                bestKey = e.getKey();
+            }
+        }
+        return bestKey == null ? null : canonical.get(bestKey);
+    }
+
+    private String cell(Row row, int idx) {
+        Cell cell = row.getCell(idx);
+        if (cell == null) {
+            return "";
+        }
+        if (cell.getCellType() == CellType.FORMULA) {
+            return Strings.trimToEmpty(formatter.formatCellValue(cell));
+        }
+        return Strings.trimToEmpty(formatter.formatCellValue(cell));
+    }
+}

@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+mig:
+  default-export-dir: ${user.home}/mig/sql/map
+  upload-temp-dir: ${java.io.tmpdir}/mapsql-upload
+  header-row: 3
+  source-alias: s
+  time-predicate: string
+  tm-format: YYYYMMDDHH24MISS
+  date-format: YYYYMMDDHH24MISS
+  length-overflow: substr
+  include-header-comment: true
+  join-condition-conflict: error
+  require-sql-rule-when-present: false
+  write-meta: true
