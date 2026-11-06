@@ -274,7 +274,7 @@
         <label>工程根目录</label>
         <div class="row">
           <div>
-            <input id="projectDir" type="text" placeholder="/path/to/project"/>
+            <input id="projectDir" type="text" placeholder="运行本服务的机器上的目录，如 D:\GITLAB\IPP"/>
           </div>
           <button class="secondary" type="button" id="btnCheckProject">检测目录</button>
         </div>
@@ -345,6 +345,8 @@
       uploadFile(e.dataTransfer.files[0]);
     }
   });
+  // 清空 value，否则同名文件再次选择时部分浏览器不触发 change
+  $('file').addEventListener('click', () => { $('file').value = ''; });
   $('file').onchange = () => {
     if ($('file').files[0]) uploadFile($('file').files[0]);
   };
@@ -353,6 +355,7 @@
     $('fileInfo').textContent = '上传中：' + file.name;
     const fd = new FormData();
     fd.append('file', file);
+    if (uploadId) fd.append('previousUploadId', uploadId);
     const res = await fetch('/api/excel/upload', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) {
@@ -360,9 +363,11 @@
       return;
     }
     uploadId = data.uploadId;
-    $('fileInfo').innerHTML = '<span class="ok">已上传</span> ' + data.fileName + '（' + data.sheetCount + ' 张业务表）';
+    const tip = data.overwritten ? '已覆盖同名文件' : '已上传';
+    $('fileInfo').innerHTML = '<span class="ok">' + tip + '</span> ' + data.fileName + '（' + data.sheetCount + ' 张业务表）';
     renderSheets(data.sheets || []);
     $('btnGenerate').disabled = false;
+    $('file').value = '';
   }
 
   function renderSheets(sheets) {

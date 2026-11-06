@@ -7,6 +7,7 @@ import com.mig.mapsql.core.model.MappingType;
 import com.mig.mapsql.core.model.TableMapping;
 import com.mig.mapsql.core.util.JoinConditionParser;
 import com.mig.mapsql.core.util.Strings;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -37,6 +38,11 @@ public class ExcelMappingReader {
 
     private static final Set<String> SKIP_SHEETS = Collections.unmodifiableSet(
             new HashSet<String>(Arrays.asList("封面", "文档说明", "目录", "修订记录")));
+
+    static {
+        // 部分映射表的 xl/styles.xml 压缩比约 0.01，刚好低于 POI 默认阈值 0.01，会被当成 zip bomb。
+        ZipSecureFile.setMinInflateRatio(0.001d);
+    }
 
     private final GeneratorProperties properties;
     private final DataFormatter formatter = new DataFormatter();

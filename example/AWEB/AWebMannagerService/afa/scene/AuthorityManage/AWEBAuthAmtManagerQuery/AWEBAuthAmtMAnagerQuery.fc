@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding = "UTF-8"?>
+<Root>
+    <Regulation>
+        <Node>
+            <UUID>CAB5965C48E24E14A05</UIUID>
+            <Name>容器变量赋值</Name>
+            <Desp>失败信息赋值</Desp>
+            <InArgs>
+                <Arg>
+                    <Key>paramList</Key>
+                    <Arg>[
+    ["productcode", ___REQ__["_AuthAmtMsg"]["productcode"]],
+    ["dealcode", "A000000"]
+]</Arg>
+                </Arg>
+                <Arg>
+                    <Key>paramList</Key>
+                    <<Arg>[
+    ["productcode", ___REQ__["_AuthAmtMsg"]["productcode"]],
+]</Arg>
+                </Arg>
+            </InArgs>
+        </Node>
+    </Regulation>
+</Root>

@@ -35,9 +35,11 @@ class ParamListExtractorTest {
         assertEquals(2, pairs.size());
         assertEquals("A000000", pairs.get(0).getDealcode());
         assertEquals("对账受理成功", pairs.get(0).getDealmsg());
+        assertEquals(5, pairs.get(0).getLineNumber());
         assertFalse(pairs.get(0).isIncomplete());
         assertEquals("A00000", pairs.get(1).getDealcode());
         assertEquals("对账完成", pairs.get(1).getDealmsg());
+        assertEquals(12, pairs.get(1).getLineNumber());
     }
 
     @Test
@@ -54,6 +56,26 @@ class ParamListExtractorTest {
         assertEquals(1, pairs.size());
         assertEquals("FIBC009", pairs.get(0).getDealcode());
         assertEquals("仍存在待补发数据", pairs.get(0).getDealmsg());
+    }
+
+    @Test
+    void skipsArgWithoutDealcode() {
+        String content = ""
+                + "<Key>paramList</Key>\n"
+                + "<Arg>[\n"
+                + "  [\"productcode\", \"P1\"]\n"
+                + "]</Arg>\n"
+                + "<Key>paramList</Key>\n"
+                + "<Arg>[\n"
+                + "  [\"dealcode\", \"A1\"],\n"
+                + "  [\"dealmsg\", \"ok\"]\n"
+                + "]</Arg>\n"
+                + "[\"dealcode\", \"OUTSIDE\"]";
+
+        List<ParamPair> pairs = ParamListExtractor.extract(content);
+        assertEquals(1, pairs.size());
+        assertEquals("A1", pairs.get(0).getDealcode());
+        assertEquals("ok", pairs.get(0).getDealmsg());
     }
 
     @Test
@@ -77,5 +99,7 @@ class ParamListExtractorTest {
         assertEquals("m1", pairs.get(0).getDealmsg());
         assertEquals("C2", pairs.get(1).getDealcode());
         assertEquals("m2", pairs.get(1).getDealmsg());
+        assertEquals(1, pairs.get(0).getLineNumber());
+        assertEquals(2, pairs.get(1).getLineNumber());
     }
 }

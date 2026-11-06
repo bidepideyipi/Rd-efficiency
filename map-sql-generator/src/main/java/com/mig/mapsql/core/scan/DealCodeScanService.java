@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -25,9 +26,22 @@ public class DealCodeScanService {
         if (rawPath == null || rawPath.trim().isEmpty()) {
             return DirStatus.fail("", "路径为空");
         }
-        Path path = Paths.get(rawPath.trim()).toAbsolutePath().normalize();
+        String raw = rawPath.trim();
+        if (raw.length() >= 2 && raw.charAt(0) == '"' && raw.charAt(raw.length() - 1) == '"') {
+            raw = raw.substring(1, raw.length() - 1).trim();
+        }
+        boolean windowsPath = raw.length() >= 3 && Character.isLetter(raw.charAt(0))
+                && raw.charAt(1) == ':'
+                && (raw.charAt(2) == '\\' || raw.charAt(2) == '/');
+        String os = System.getProperty("os.name", "");
+        if (windowsPath && !os.toLowerCase(Locale.ROOT).startsWith("windows")) {
+            return DirStatus.fail(raw, "目录不存在：服务运行在 " + os
+                    + "，只能检查这台机器上的路径，不能访问 " + raw
+                    + "。请在存放该目录的 Windows 上启动本程序后再检测");
+        }
+        Path path = Paths.get(raw).toAbsolutePath().normalize();
         if (!Files.exists(path)) {
-            return DirStatus.fail(path.toString(), "目录不存在");
+            return DirStatus.fail(path.toString(), "目录不存在: " + path);
         }
         if (!Files.isDirectory(path)) {
             return DirStatus.fail(path.toString(), "不是目录");
@@ -80,7 +94,9 @@ public class DealCodeScanService {
                                 + " dealcode=" + pair.getDealcode()
                                 + " dealmsg=" + pair.getDealmsg());
                     }
-                    rows.add(new DealCodeHit(service, module, pair.getDealcode(), pair.getDealmsg(), rel));
+                    String fileName = file.getFileName() == null ? "" : file.getFileName().toString();
+                    rows.add(new DealCodeHit(service, module, pair.getDealcode(), pair.getDealmsg(),
+                            rel, fileName, pair.getLineNumber()));
                 }
             } catch (Exception e) {
                 failedFiles++;
@@ -95,13 +111,15 @@ public class DealCodeScanService {
         StringBuilder sb = new StringBuilder();
         // UTF-8 BOM for Excel
         sb.append('\uFEFF');
-        sb.append("服务名,模块名,dealcode,dealmsg\n");
+        sb.append("服务名,模块名,dealcode,dealmsg,文件名,行号\n");
         if (rows != null) {
             for (DealCodeHit hit : rows) {
                 sb.append(csvField(hit.getServiceName())).append(',')
                         .append(csvField(hit.getModuleName())).append(',')
                         .append(csvField(hit.getDealcode())).append(',')
-                        .append(csvField(hit.getDealmsg())).append('\n');
+                        .append(csvField(hit.getDealmsg())).append(',')
+                        .append(csvField(hit.getFileName())).append(',')
+                        .append(hit.getLineNumber()).append('\n');
             }
         }
         // Overview section: dealcode counts, ascending
@@ -128,6 +146,8 @@ public class DealCodeScanService {
             m.put("模块名", hit.getModuleName());
             m.put("dealcode", hit.getDealcode());
             m.put("dealmsg", hit.getDealmsg());
+            m.put("文件名", hit.getFileName());
+            m.put("行号", String.valueOf(hit.getLineNumber()));
             rowMaps.add(m);
         }
         body.put("rows", rowMaps);

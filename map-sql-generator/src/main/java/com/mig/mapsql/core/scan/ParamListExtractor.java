@@ -33,27 +33,55 @@ public final class ParamListExtractor {
             return new ArrayList<ParamPair>();
         }
         List<ParamPair> fromBlocks = extractFromParamListBlocks(content);
-        if (!fromBlocks.isEmpty()) {
+        if (fromBlocks != null) {
             return fromBlocks;
         }
         return extractFallbackPairs(content);
     }
 
+    /**
+     * @return pairs from paramList Arg blocks, or null when the file has no such block.
+     *         An Arg without dealcode is skipped and does not fall through to the whole-file scan.
+     */
     private static List<ParamPair> extractFromParamListBlocks(String content) {
         List<ParamPair> pairs = new ArrayList<ParamPair>();
         Matcher blockMatcher = PARAM_LIST_BLOCK.matcher(content);
+        boolean sawBlock = false;
         while (blockMatcher.find()) {
-            String block = blockMatcher.group(1);
-            pairs.add(pairFromBlock(block));
+            sawBlock = true;
+            ParamPair pair = pairFromBlock(content, blockMatcher.group(1), blockMatcher.start(1));
+            if (pair != null) {
+                pairs.add(pair);
+            }
         }
-        return pairs;
+        return sawBlock ? pairs : null;
     }
 
     static ParamPair pairFromBlock(String block) {
-        String code = firstGroup(DEALCODE, block);
-        String msg = firstGroup(DEALMSG, block);
-        boolean incomplete = (code == null || code.isEmpty()) || (msg == null || msg.isEmpty());
-        return new ParamPair(code, msg, incomplete);
+        return pairFromBlock(block, block, 0);
+    }
+
+    private static ParamPair pairFromBlock(String content, String block, int blockStart) {
+        String code = null;
+        String msg = null;
+        int line = lineNumberAt(content, blockStart);
+        Matcher codeMatcher = DEALCODE.matcher(block);
+        if (codeMatcher.find()) {
+            code = codeMatcher.group(1);
+            line = lineNumberAt(content, blockStart + codeMatcher.start());
+        }
+        Matcher msgMatcher = DEALMSG.matcher(block);
+        if (msgMatcher.find()) {
+            msg = msgMatcher.group(1);
+            if (code == null) {
+                line = lineNumberAt(content, blockStart + msgMatcher.start());
+            }
+        }
+        if (code == null || code.isEmpty()) {
+            return null;
+        }
+        boolean incomplete = msg == null || msg.isEmpty();
+        return new ParamPair(code, msg, incomplete, line);
     }
 
     /**
@@ -64,23 +92,35 @@ public final class ParamListExtractor {
         Matcher codeMatcher = DEALCODE.matcher(content);
         while (codeMatcher.find()) {
             String code = codeMatcher.group(1);
+            int line = lineNumberAt(content, codeMatcher.start());
             int from = codeMatcher.end();
             Matcher msgMatcher = DEALMSG.matcher(content);
             String msg = null;
             if (msgMatcher.find(from)) {
                 msg = msgMatcher.group(1);
             }
-            boolean incomplete = code == null || code.isEmpty() || msg == null || msg.isEmpty();
-            pairs.add(new ParamPair(code, msg, incomplete));
+            if (code == null || code.isEmpty()) {
+                continue;
+            }
+            boolean incomplete = msg == null || msg.isEmpty();
+            pairs.add(new ParamPair(code, msg, incomplete, line));
         }
         return pairs;
     }
 
-    private static String firstGroup(Pattern pattern, String text) {
-        Matcher m = pattern.matcher(text);
-        if (m.find()) {
-            return m.group(1);
+    /** 1-based line number of {@code index} in {@code content}. */
+    static int lineNumberAt(String content, int index) {
+        if (content == null || content.isEmpty()) {
+            return 1;
         }
-        return null;
+        int line = 1;
+        int end = Math.min(Math.max(index, 0), content.length());
+        for (int i = 0; i < end; i++) {
+            if (content.charAt(i) == '\n') {
+                line++;
+            }
+        }
+        return line;
     }
+
 }

@@ -40,7 +40,7 @@ mvn spring-boot:run
 - 「库表关联条件」解析进 `WHERE`，并支持 `LEFT JOIN` / `INNER JOIN`（含 `select * from … inner join …` 同格写法）
 - 时间条件保留 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
 
-跳板机导出 CSV 见仓库 `scripts/export_by_map.sh`。
+跳板机导出 CSV：编辑 `scripts/export-job.conf`。单表单窗用 `scripts/export_by_map.sh`；按文件列表和时间间隔批量导出用 `scripts/export_batch.sh`。
 
 ---
 
@@ -63,7 +63,7 @@ mvn spring-boot:run
 明细区：
 
 ```text
-服务名,模块名,dealcode,dealmsg
+服务名,模块名,dealcode,dealmsg,文件名,行号
 ```
 
 空行后为总览（按 dealcode 字母升序）：

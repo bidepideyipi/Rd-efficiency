@@ -685,50 +685,21 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **SQLcl C
 
 ### 7.1 标准导出脚本（唯一推荐形态）
 
-跳板机需已安装 SQLcl（可执行名多为 `sql`；以环境为准）。产物为 `.csv`，**不生成 `.json`**。  
-SQL 路径与 Web 导出目录约定一致：`{exportDir}/{表名}.sql`。
+跳板机需已安装 SQLcl（可执行名多为 `sql`；以环境为准）。产物为 `.csv`，**不生成 `.json`**。
+
+路径与连接只读脚本同目录的 `export-job.conf`，不使用环境变量：
+
+| 键 | 含义 |
+|----|------|
+| `sqlDir` | SQL 模板目录，文件为 `{表名}.sql` |
+| `outDir` | CSV 输出目录 |
+| `connect` | SQLcl 连接串 `user/password@SERVICE` |
+
+时间窗与表名仍由命令行传入（单表、单窗）：
 
 ```bash
-#!/bin/bash
-set -euo pipefail
-
-BEGIN_TM="${1:?}"
-END_TM="${2:?}"
-TM_COLUMN="${3:-TRANDATE}"
-TABLE_NAME="${4:-IBPS_PAYMENTINIT}"
-EXPORT_DIR="${EXPORT_DIR:-/opt/mig/sql/map}"
-
-TPL="${EXPORT_DIR}/${TABLE_NAME}.sql"
-RUN_SQL="/tmp/${TABLE_NAME}_run.sql"
-OUT="/opt/mig/out/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.csv"
-
-# 时间列白名单（防注入）
-case "${TM_COLUMN}" in
-  TRANDATE|TRANTIME|WORKDATE) ;;
-  *) echo "invalid tmColumn: ${TM_COLUMN}" >&2; exit 1 ;;
-esac
-
-sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
-    -e "s/{{endTm}}/${END_TM}/g" \
-    -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
-    "${TPL}" > "${RUN_SQL}"
-
-sql -s src/pwd@SRC_SERVICE <<EOF
-SET SQLFORMAT csv
-SET HEADING ON
-WHENEVER SQLERROR EXIT FAILURE
-SPOOL ${OUT}
-@${RUN_SQL}
-SPOOL OFF
-EXIT
-EOF
-```
-
-调用示例：
-
-```bash
-./export_by_map.sh 20240101 20240102 TRANDATE
-# → /opt/mig/out/IBPS_20240101_20240102.csv
+./export_by_map.sh 20240101 20240102 TRANDATE IBPS_PAYMENTINIT
+# → {outDir}/IBPS_PAYMENTINIT_20240101_20240102.csv
 ```
 
 ### 7.2 导入目标库（CSV）
@@ -743,14 +714,29 @@ sqlldr tgt/pwd@TGT_SERVICE \
 
 `skip=1`：跳过 SQLcl 写出的表头行。
 
-### 7.3 量级与分批
+### 7.3 多文件与日期分片
+
+`export_batch.sh` 读同一份 `export-job.conf`，按文件列表 × 时间片串行调用 `export_by_map.sh`。不使用环境变量。
+
+| 键 | 含义 |
+|----|------|
+| `tmColumn` | 默认时间列，替换 `{{tmColumn}}`。单表不同时写成 `表名\|列名` |
+| `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
+| `interval` | 只按天：`Nd`，如 `1d` |
+| `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
+| `files` | 表名列表。整段省略或留空则取 `sqlDir` 下全部 `*.sql` |
+
+```bash
+./export_batch.sh
+# → {outDir}/{表名}_{sliceBegin}_{sliceEnd}.csv
+# → {outDir}/_batch/export-manifest.txt
+```
 
 | 约定 | 说明 |
 |------|------|
-| 导出方式 | 客户端拉数（SQLcl），单线程，适合按时间窗切批 |
+| 导出方式 | 客户端拉数（SQLcl），单线程，按时间窗切批 |
 | 单次建议 | 控制在百万～千万行，或单文件约数 GB 内 |
-| 大表策略 | 循环传入不同 `beginTm`/`endTm`，多个 CSV 再分别或合并加载 |
-| 不做的事 | 单次 SPOOL 硬导 1 亿行；不使用 `SQLFORMAT json` |
+| 不做的事 | 单次 SPOOL 硬导 1 亿行；不使用 `SQLFORMAT json`；不按自然月切分 |
 
 ### 7.4 合约约束
 
@@ -812,7 +798,9 @@ map-sql-generator/
 
 ```text
 scripts/
-  export_by_map.sh                # 读取 {exportDir}/{表名}.sql → SQLcl csv SPOOL
+  export-job.conf                 # 路径、连接、文件列表、时间范围与间隔
+  export_by_map.sh                # 单表单窗：读 conf，替换占位符 → SQLcl csv SPOOL
+  export_batch.sh                 # 多文件 × 时间片，逐次调用 export_by_map.sh
 ```
 
 ---

@@ -42,9 +42,42 @@ public class GenerateService {
     }
 
     public String storeUpload(Path tempFile) {
+        return storeUpload(tempFile, null);
+    }
+
+    /**
+     * 登记上传文件。同路径（同名覆盖）时复用/替换旧 uploadId；
+     * 若传入 previousUploadId 且指向不同路径，则删除旧临时文件。
+     */
+    public String storeUpload(Path tempFile, String previousUploadId) {
+        Path normalized = tempFile.toAbsolutePath().normalize();
+        cleanupPreviousUpload(previousUploadId, normalized);
+
+        // 同路径已有登记时，替换为新 id，避免内存里残留多条指向同一文件
+        uploads.entrySet().removeIf(e -> e.getValue().toAbsolutePath().normalize().equals(normalized));
+
         String id = UUID.randomUUID().toString().replace("-", "");
-        uploads.put(id, tempFile);
+        uploads.put(id, normalized);
         return id;
+    }
+
+    private void cleanupPreviousUpload(String previousUploadId, Path keep) {
+        if (previousUploadId == null || previousUploadId.trim().isEmpty()) {
+            return;
+        }
+        Path old = uploads.remove(previousUploadId.trim());
+        if (old == null) {
+            return;
+        }
+        Path oldNorm = old.toAbsolutePath().normalize();
+        if (oldNorm.equals(keep)) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(oldNorm);
+        } catch (IOException ignored) {
+            // best-effort cleanup
+        }
     }
 
     public Path getUpload(String uploadId) {

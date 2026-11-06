@@ -22,7 +22,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
+import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -58,25 +58,34 @@ public class GenerateController {
     }
 
     @PostMapping(value = "/excel/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Map<String, Object> upload(@RequestParam("file") MultipartFile file) throws IOException {
+    public Map<String, Object> upload(@RequestParam("file") MultipartFile file,
+                                      @RequestParam(value = "previousUploadId", required = false) String previousUploadId)
+            throws IOException {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("请上传 Excel 文件");
         }
-        String name = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
-        if (!name.toLowerCase().endsWith(".xlsx")) {
+        String rawName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
+        String name = Paths.get(rawName).getFileName().toString();
+        if (name.isEmpty() || !name.toLowerCase().endsWith(".xlsx")) {
             throw new IllegalArgumentException("仅支持 .xlsx");
         }
-        Path dir = Paths.get(properties.getUploadTempDir());
+        Path dir = Paths.get(properties.getUploadTempDir()).toAbsolutePath().normalize();
         Files.createDirectories(dir);
-        Path target = Files.createTempFile(dir, "upload-", ".xlsx");
-        file.transferTo(target.toFile());
-        String uploadId = generateService.storeUpload(target);
+        // 同名覆盖：按原始文件名落盘，避免每次 createTempFile 残留旧副本
+        Path target = dir.resolve(name).normalize();
+        if (!target.startsWith(dir)) {
+            throw new IllegalArgumentException("非法文件名");
+        }
+        boolean replaced = Files.exists(target);
+        Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+        String uploadId = generateService.storeUpload(target, previousUploadId);
         List<String> sheets = generateService.listSheets(uploadId);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("uploadId", uploadId);
         body.put("fileName", name);
         body.put("sheets", sheets);
         body.put("sheetCount", sheets.size());
+        body.put("overwritten", replaced);
         return body;
     }
 

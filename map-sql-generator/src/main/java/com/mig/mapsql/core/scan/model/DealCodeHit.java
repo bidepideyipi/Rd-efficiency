@@ -7,16 +7,33 @@ public class DealCodeHit {
     private String dealcode;
     private String dealmsg;
     private String relativePath;
+    private String fileName;
+    private int lineNumber;
 
     public DealCodeHit() {
     }
 
     public DealCodeHit(String serviceName, String moduleName, String dealcode, String dealmsg, String relativePath) {
+        this(serviceName, moduleName, dealcode, dealmsg, relativePath, fileNameOf(relativePath), 0);
+    }
+
+    public DealCodeHit(String serviceName, String moduleName, String dealcode, String dealmsg,
+                       String relativePath, String fileName, int lineNumber) {
         this.serviceName = serviceName == null ? "" : serviceName;
         this.moduleName = moduleName == null ? "" : moduleName;
         this.dealcode = dealcode == null ? "" : dealcode;
         this.dealmsg = dealmsg == null ? "" : dealmsg;
         this.relativePath = relativePath == null ? "" : relativePath;
+        this.fileName = fileName == null ? "" : fileName;
+        this.lineNumber = lineNumber < 0 ? 0 : lineNumber;
+    }
+
+    private static String fileNameOf(String relativePath) {
+        if (relativePath == null || relativePath.isEmpty()) {
+            return "";
+        }
+        int slash = Math.max(relativePath.lastIndexOf('/'), relativePath.lastIndexOf('\\'));
+        return slash < 0 ? relativePath : relativePath.substring(slash + 1);
     }
 
     public String getServiceName() {
@@ -57,5 +74,21 @@ public class DealCodeHit {
 
     public void setRelativePath(String relativePath) {
         this.relativePath = relativePath;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public void setFileName(String fileName) {
+        this.fileName = fileName;
+    }
+
+    public int getLineNumber() {
+        return lineNumber;
+    }
+
+    public void setLineNumber(int lineNumber) {
+        this.lineNumber = lineNumber;
     }
 }
