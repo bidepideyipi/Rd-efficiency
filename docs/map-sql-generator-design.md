@@ -2,15 +2,16 @@
 
 | 项 | 内容 |
 |----|------|
-| 版本 | V1.4 |
-| 日期 | 2026-11-03 |
+| 版本 | V1.9 |
+| 日期 | 2026-11-09 |
 | 标准文档 | `数据迁移中间表映射关系（跨行支付平台）V0.4.xlsx`（以 Sheet 结构/列定义为准） |
 | 目标 | 读取映射 Excel，生成可被 Shell 参数化执行的 SELECT SQL |
 | 使用方式 | **Web 界面为主**（上传 Excel、配置导出目录）；CLI 为辅 |
 | 产出约定 | **一张目标表对应一个 `.sql` 文件**，文件名 = 目标表名（Sheet 名） |
 | 关联支持 | **单源表 WHERE** 与 **主表 + LEFT JOIN 副表**（见 §2A.4 / §2A.5） |
-| 运行时导出 | Linux 跳板机：Shell 替换占位符 + **SQLcl `SET SQLFORMAT csv` + `SPOOL`** → `.csv` |
-| 非目标 | 不负责 `expdp`/搬数；不建中间表/视图；不直接连库导数据；**不导出 JSON** |
+| 运行时导出 | Linux 跳板机：Shell 替换占位符 + **sqlplus `SPOOL`** → 无表头、`0x01` 定界 `.dat` + **sqlldr `.ctl`** |
+| 运行时装载 | 目标侧 **sqlldr**：`sqlldr ... control={表}_{begin}_{end}.ctl` |
+| 非目标 | 不负责 `expdp`/搬数；不建中间表/视图；不直接连库导数据；**不导出 JSON / CSV** |
 
 ---
 
@@ -32,10 +33,13 @@
 生成后的 SQL 仍由跳板机 Shell：
 
 1. 替换 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
-2. **SQLcl**：`SET SQLFORMAT csv` + `SPOOL` → `.csv`
-3. 目标库用 SQL\*Loader（`skip=1`）或外部表加载
+2. **sqlplus**（源库）：`SPOOL` → 无表头、字段分隔符 `CHR(1)`（`0x01`）的 `.dat`
+3. 按同一映射列序生成 **sqlldr 控制文件** `.ctl`
+4. 目标侧 **sqlldr** 装载：`sqlldr user/pass@TGT control=….ctl`
 
-生成物必须是纯 SELECT，**禁止**：`CREATE TABLE` / `VIEW` / `INSERT` / `MERGE` / `expdp`。
+列序合约：数据文件第 N 列 = `{表名}.sql` 中 SELECT 第 N 项（Excel 映射行序 / `AS` 目标列名）= `.ctl` 列清单顺序，**不以**目标表 DDL 物理列序为准。不用 `|` 作分隔符（源文本可能含 `|`）。
+
+生成器产出的 map SQL 必须是纯 SELECT，**禁止**：`CREATE TABLE` / `VIEW` / `INSERT` / `MERGE` / `expdp`。（`.dat` / `.ctl` 由导出脚本产出，不属于生成器输出。）
 
 ---
 
@@ -431,7 +435,8 @@ WHERE s.{{tmColumn}} >= TO_DATE('{{beginTm}}', '{{tmFormat}}')
                     └─────────────────┬───────────────────┘
                                       ▼
                     ┌─────────────────────────────────────┐
-                    │ Shell：替换 {{...}} → SQLcl csv SPOOL │
+                    │ Shell：替换 {{...}} → sqlplus SPOOL .dat │
+                    │ 生成 .ctl → 目标侧 sqlldr control=….ctl  │
                     └─────────────────────────────────────┘
 
 CLI 复用同一套 core 引擎，不经过 Web。
@@ -679,40 +684,91 @@ java -jar map-sql-generator.jar --cli \
 
 ---
 
-## 7. 与 Shell 导出的衔接（合约）
+## 7. 与 Shell 导出 / 装载的衔接（合约）
 
-Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **SQLcl CSV 导出**。
+Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus 导出**；目标侧用 **sqlldr** 装载。现网导出客户端为 **sqlplus**（不用 SQLcl）。
 
 ### 7.1 标准导出脚本（唯一推荐形态）
 
-跳板机需已安装 SQLcl（可执行名多为 `sql`；以环境为准）。产物为 `.csv`，**不生成 `.json`**。
+跳板机需已安装 **sqlplus**（导出）与 **sqlldr**（装载），均在 `PATH` 中。产物为：
+
+- **无表头**、字段分隔符 **`CHR(1)`（`0x01`）** 的 `.dat`
+- 同序的 sqlldr 控制文件 `.ctl`
+
+**不生成** `.csv` / `.json` / `_load.sql`。选用 `0x01` 而非 `|`：源文本可能含 `|`，定界符冲突会导致错列。
 
 路径与连接只读脚本同目录的 `export-job.conf`，不使用环境变量：
 
 | 键 | 含义 |
 |----|------|
 | `sqlDir` | SQL 模板目录，文件为 `{表名}.sql` |
-| `outDir` | CSV 输出目录 |
-| `connect` | SQLcl 连接串 `user/password@SERVICE` |
+| `outDir` | `.dat` / `.ctl` 输出目录 |
+| `connect` | 源库 sqlplus 连接串 `user/password@SERVICE` |
+| `tgtConnect` | 目标库 sqlldr 连接串（`load_by_map.sh`） |
+| `ctlCharset` | 可选，默认 `AL32UTF8`；写入 `.ctl` 的 `CHARACTERSET` |
+| `loadMode` | 可选，默认 `APPEND`；`APPEND` / `TRUNCATE` / `REPLACE` / `INSERT` |
+| `sqlldrErrors` / `sqlldrRows` / `sqlldrDirect` | 可选；传给 sqlldr |
 
 时间窗与表名仍由命令行传入（单表、单窗）：
 
 ```bash
 ./export_by_map.sh 20240101 20240102 TRANDATE IBPS_PAYMENTINIT
-# → {outDir}/IBPS_PAYMENTINIT_20240101_20240102.csv
+# → {outDir}/IBPS_PAYMENTINIT_20240101_20240102.dat
+# → {outDir}/IBPS_PAYMENTINIT_20240101_20240102.ctl
 ```
 
-### 7.2 导入目标库（CSV）
+`export_by_map.sh` 行为：
+
+1. 替换占位符；从 map SQL 提取 `) AS 列名` 作为列序  
+2. 包成子查询，用 `NVL(TO_CHAR(q.列), '') || CHR(1) || ...` 拼单列后 `SPOOL` → `.dat`  
+3. 按同一列序生成 `.ctl`（`INFILE` 指向该 `.dat`，`FIELDS TERMINATED BY X'01'`）
+
+导出会话：无表头、`PAGESIZE 0`、`LINESIZE` 足够大、`TRIMSPOOL ON`。须避免折行截断。
+
+### 7.2 导入目标库（sqlldr 脚本）
+
+单片：
 
 ```bash
-sqlldr tgt/pwd@TGT_SERVICE \
-  control=IBPS_PAYMENTINIT.ctl \
-  data=/opt/mig/out/IBPS_${BEGIN_TM}_${END_TM}.csv \
-  direct=true \
-  skip=1
+./load_by_map.sh 20240101 20240102 IBPS_PAYMENTINIT
+# 等价于：
+# sqlldr userid=${tgtConnect} control=.../IBPS_PAYMENTINIT_20240101_20240102.ctl \
+#   log=....log bad=....bad errors=${sqlldrErrors} rows=${sqlldrRows} direct=${sqlldrDirect}
 ```
 
-`skip=1`：跳过 SQLcl 写出的表头行。
+批量（优先消费 `export-manifest.txt` 的 OK 行）：
+
+```bash
+./load_batch.sh
+# → {outDir}/_batch/load-manifest.txt
+```
+
+`export-job.conf` 装载相关键：`tgtConnect`（必填）、`sqlldrErrors` / `sqlldrRows` / `sqlldrDirect`（可选）。
+
+`.ctl` 要点（列序 = map SQL 的 `AS` 顺序，与表 DDL 物理顺序无关）：
+
+```text
+LOAD DATA
+CHARACTERSET AL32UTF8
+INFILE '/opt/mig/out/IBPS_PAYMENTINIT_20240101_20240102.dat'
+BADFILE '...bad'
+APPEND INTO TABLE IBPS_PAYMENTINIT
+FIELDS TERMINATED BY X'01'
+TRAILING NULLCOLS
+(
+  AGENTSERIALNO CHAR(4000) NULLIF AGENTSERIALNO=BLANKS,
+  MBFLAG CHAR(4000) NULLIF MBFLAG=BLANKS,
+  ...
+)
+```
+
+约定：空字段按 `NULLIF …=BLANKS` 置 NULL；值以字符读入，由 Oracle 隐式转换到 NUMBER/DATE 等目标类型（日期格式依赖会话/`NLS_DATE_FORMAT`，必要时在 ctl 为日期列加 `DATE '…'` 掩码——属表级定制，默认脚本统一 `CHAR`）。
+
+合约：
+
+1. `.dat` 无表头；第 N 字段对应 SELECT 第 N 个 `AS` 目标列。  
+2. `.ctl` 列清单顺序必须与该列序一致。  
+3. 装载走 **sqlldr**；不再使用 INSERT 脚本 / 外部表。
 
 ### 7.3 多文件与日期分片
 
@@ -720,31 +776,34 @@ sqlldr tgt/pwd@TGT_SERVICE \
 
 | 键 | 含义 |
 |----|------|
-| `tmColumn` | 默认时间列，替换 `{{tmColumn}}`。单表不同时写成 `表名\|列名` |
 | `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
 | `interval` | 只按天：`Nd`，如 `1d` |
 | `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
-| `files` | 表名列表。整段省略或留空则取 `sqlDir` 下全部 `*.sql` |
+| `tables` | **每表必配时间列**：后续行 `表名 = TRANDATE\|TRANTIME\|WORKDATE\|SENDTIME`。无全局默认；已移除 `tmColumn` / `files` |
 
 ```bash
 ./export_batch.sh
-# → {outDir}/{表名}_{sliceBegin}_{sliceEnd}.csv
+# → {outDir}/{表名}_{sliceBegin}_{sliceEnd}.dat
+# → {outDir}/{表名}_{sliceBegin}_{sliceEnd}.ctl
 # → {outDir}/_batch/export-manifest.txt
+#    行格式：表名,片开始,片结束,dat路径,ctl路径,OK|FAIL
 ```
 
 | 约定 | 说明 |
 |------|------|
-| 导出方式 | 客户端拉数（SQLcl），单线程，按时间窗切批 |
+| 导出方式 | 客户端拉数（sqlplus），单线程，按时间窗切批 |
+| 装载方式 | sqlldr 按片执行对应 `.ctl` |
 | 单次建议 | 控制在百万～千万行，或单文件约数 GB 内 |
-| 不做的事 | 单次 SPOOL 硬导 1 亿行；不使用 `SQLFORMAT json`；不按自然月切分 |
+| 不做的事 | 单次 SPOOL 硬导 1 亿行；不导出 CSV/JSON；不按自然月切分 |
 
 ### 7.4 合约约束
 
 1. 三个占位符名称固定，大小写敏感：`{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`。  
-2. `{表名}.sql` 以单条 `SELECT ... ;` 为主（可有注释）。  
+2. `{表名}.sql` 以单条 `SELECT ... ;` 为主（可有注释）；SELECT 列表顺序 = Excel 非 `00` 映射行序 = `.dat` 字段序 = `.ctl` 列序。  
 3. Shell 侧必须对 `{{tmColumn}}` 做白名单校验后再替换。  
-4. 运行时客户端为 **SQLcl**；导出格式固定 **`SET SQLFORMAT csv`** → `.csv`。  
-5. 跳板机统一 `NLS_LANG`（或 SQLcl 字符集相关设置），避免中文乱码。
+4. 运行时：**sqlplus** 导出无表头 **`0x01` `.dat`**；**sqlldr** 按同序 **`.ctl`** 装载。  
+5. 跳板机统一 `NLS_LANG` / `.ctl` `CHARACTERSET`，避免中文乱码。  
+6. 分隔符不用 `|`（源数据可能含 `|`）。
 
 ---
 
@@ -798,9 +857,11 @@ map-sql-generator/
 
 ```text
 scripts/
-  export-job.conf                 # 路径、连接、文件列表、时间范围与间隔
-  export_by_map.sh                # 单表单窗：读 conf，替换占位符 → SQLcl csv SPOOL
+  export-job.conf                 # 路径、源/目标连接、文件列表、时间范围与 sqlldr 参数
+  export_by_map.sh                # 单表单窗：sqlplus SPOOL .dat + 生成 sqlldr .ctl
   export_batch.sh                 # 多文件 × 时间片，逐次调用 export_by_map.sh
+  load_by_map.sh                  # 单表单窗：sqlldr 装载对应 .ctl
+  load_batch.sh                   # 按 export-manifest OK 行（或 conf 扫片）逐次装载
 ```
 
 ---
@@ -822,9 +883,11 @@ scripts/
 1. **规则说明质量依赖人工**：错误 CASE 会原样进 SQL，运行期才失败。  
 2. **大结果集导出性能**：本工具不解决；分批靠 Shell 传时间窗。  
 3. **Excel 多行「库表关联条件」不一致**：必须在校验期暴露。  
-4. **字符集**：CSV 与 Oracle / SQLcl 字符集需运维统一，生成器只保证 UTF-8 源 SQL。  
+4. **字符集**：`.dat` / `.ctl` `CHARACTERSET` 与 Oracle / sqlplus / sqlldr 字符集需运维统一，生成器只保证 UTF-8 源 SQL。  
 5. **不生成中间表**：任何「落库再导」需求不在本工程范围。  
-6. **依赖 SQLcl**：跳板机需安装 SQLcl；传统 `sqlplus` + `COLSEP` 不作为本方案基线。
+6. **依赖 sqlplus + sqlldr**：源导出用 sqlplus；目标装载用 sqlldr（Instant Client Tools 等）。  
+7. **定界与折行**：字段内若出现 `0x01` 或嵌入换行会错列；`LINESIZE` / `TRIMSPOOL` 配置不当会导致截断，须在试点表验证。  
+8. **超长字段**：`.ctl` 默认 `CHAR(4000)`；若单字段可能更长，需按表调大或改 `CHAR`/`VARCHARC`。
 
 ---
 
@@ -838,14 +901,14 @@ scripts/
 - [ ] **支持 LEFT JOIN**：`HVPS_PAYMENTINIT` 等主从表可生成，副表字段使用正确别名
 - [ ] 多源表不再因「源表不一致」误杀；缺 JOIN 定义才 ERROR
 - [ ] 输出目录可任意配置（可写即可）；同名覆盖策略可用
-- [ ] CLI 与 Web 共用同一生成引擎；Shell + SQLcl csv 可消费生成文件
+- [ ] CLI 与 Web 共用同一生成引擎；Shell + sqlplus 产出 `0x01` `.dat` 与同序 `.ctl`；目标侧 sqlldr 可装载
 
 ---
 
 ## 14. 一句话范围
 
 **Web 上传 Excel、配置输出目录；按 V0.4 规则一表一 SQL。**  
-**规则优先；类型/长度处理；WHERE + 可选 LEFT JOIN；跳板机 SQLcl 导出 CSV。**
+**规则优先；类型/长度处理；WHERE + 可选 LEFT JOIN；跳板机 sqlplus 导出无表头 `0x01` `.dat` + `.ctl`，目标侧 sqlldr 装载。**
 
 ---
 
@@ -858,3 +921,8 @@ scripts/
 | V1.2 | 2026-03-27 | 对齐 V0.4：规则说明优先、类型转换、长度处理、关联条件→WHERE；`04-类型转换` |
 | V1.3 | 2026-03-27 | 增加 Web 界面：上传 Excel、配置导出目录、一表一 `{表名}.sql`；Spring Boot 架构 |
 | V1.4 | 2026-11-03 | **支持 LEFT JOIN / 多源表**：关联条件分类（WHERE vs JOIN）；主表频次判定；副表别名；取消「多源表直接失败」 |
+| V1.5 | 2026-11-09 | 运行时改回 **sqlplus**：无表头 `0x01` `.dat`；列序=映射/SELECT；明确不用 `|`、不用 CSV |
+| V1.6 | 2026-11-09 | 装载曾改为 `.dat` → `INSERT` 脚本 → sqlplus `@`（过渡） |
+| V1.7 | 2026-11-09 | 确认可用 **sqlldr**：装载改为 `.dat` + `.ctl`；去掉 `_load.sql` / INSERT 脚本路径 |
+| V1.8 | 2026-11-09 | 增加 **`load_by_map.sh` / `load_batch.sh`**；conf 增加 `tgtConnect` 与 sqlldr 运行参数 |
+| V1.9 | 2026-11-09 | 批量配置改为 **`tables`：每表一行 `表名 = 时间列`**；移除全局 `tmColumn` / `files` |

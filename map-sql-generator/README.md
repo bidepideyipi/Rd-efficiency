@@ -40,7 +40,7 @@ mvn spring-boot:run
 - 「库表关联条件」解析进 `WHERE`，并支持 `LEFT JOIN` / `INNER JOIN`（含 `select * from … inner join …` 同格写法）
 - 时间条件保留 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
 
-跳板机导出 CSV：编辑 `scripts/export-job.conf`。单表单窗用 `scripts/export_by_map.sh`；按文件列表和时间间隔批量导出用 `scripts/export_batch.sh`。
+跳板机：**sqlplus** 导出 `.dat` + `.ctl`（`export_*.sh`），**sqlldr** 装载（`load_*.sh`）。编辑 `scripts/export-job.conf`（含 `tgtConnect`）。说明见 `scripts/README.md` 与 `docs/map-sql-generator-design.md` §7。
 
 ---
 
