@@ -179,7 +179,7 @@ public class MappingValidator {
             }
         }
         if (table.isLeftJoinConflict()) {
-            String msg = "同一副表存在多条不一致的 JOIN（类型或 ON 条件）";
+            String msg = "JOIN 关联条件冲突（通常不应再出现；同别名不同 ON/表会自动改别名）";
             if ("error".equalsIgnoreCase(properties.getJoinConditionConflict())) {
                 messages.add(cellErr(tableName, null, ExcelColumns.JOIN_CONDITION, ExcelColumns.H_JOIN, null, msg));
             } else {

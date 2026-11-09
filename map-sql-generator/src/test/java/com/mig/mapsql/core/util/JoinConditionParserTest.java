@@ -77,4 +77,65 @@ class JoinConditionParserTest {
         assertEquals("FOO", r.getLeftJoins().get(0).getTableName());
         assertEquals("x", r.getLeftJoins().get(0).getAlias());
     }
+
+    @Test
+    void sameTableDifferentAliasesAllowed() {
+        JoinConditionParser.RelationParseResult r = JoinConditionParser.parseAll(Arrays.asList(
+                "left join a08tbankinfo c1 on c1.bkcd=a.SNDBRN",
+                "left join a08tbankinfo c2 on c2.bkcd=a.RCVBRN",
+                "left join a08tbankinfo c1 on c1.bkcd=a.SNDBRN"
+        ), "s");
+
+        assertFalse(r.isLeftJoinConflict());
+        assertEquals(2, r.getLeftJoins().size());
+        Set<String> aliases = new HashSet<String>();
+        for (LeftJoinSpec j : r.getLeftJoins()) {
+            assertEquals("a08tbankinfo", j.getTableName());
+            aliases.add(j.getAlias());
+        }
+        assertTrue(aliases.contains("c1"));
+        assertTrue(aliases.contains("c2"));
+    }
+
+    @Test
+    void sameAliasDifferentOnAutoRenames() {
+        JoinConditionParser.RelationParseResult r = JoinConditionParser.parseAll(Arrays.asList(
+                "left join a08tbankinfo c on c.bkcd=a.RCVUPBRN",
+                "left join a08tbankinfo c on c.bkcd=a.INCOUPBRN"
+        ), "s");
+
+        assertFalse(r.isLeftJoinConflict());
+        assertEquals(2, r.getLeftJoins().size());
+        Set<String> aliases = new HashSet<String>();
+        for (LeftJoinSpec j : r.getLeftJoins()) {
+            aliases.add(j.getAlias());
+            assertTrue(j.getOnPredicate().startsWith(j.getAlias() + "."));
+        }
+        assertEquals(2, aliases.size());
+        assertTrue(aliases.contains("c"));
+    }
+
+    @Test
+    void resolveJoinAliasFollowsAutoRenameByOn() {
+        JoinConditionParser.RelationParseResult r = JoinConditionParser.parseAll(Arrays.asList(
+                "left join a08tbankinfo c on c.bkcd=a.SNDBRN",
+                "left join a08tbankinfo c on c.bkcd=a.RCVBRN"
+        ), "s");
+        assertEquals(2, r.getLeftJoins().size());
+
+        String a1 = JoinConditionParser.resolveJoinAlias(
+                "left join a08tbankinfo c on c.bkcd=a.SNDBRN", "A08TBANKINFO", r.getLeftJoins(), "s");
+        String a2 = JoinConditionParser.resolveJoinAlias(
+                "left join a08tbankinfo c on c.bkcd=a.RCVBRN", "A08TBANKINFO", r.getLeftJoins(), "s");
+        assertEquals("c", a1);
+        assertTrue(a2 != null && !a2.equals("c"));
+    }
+
+    @Test
+    void extractJoinAliasForTableReadsRowAlias() {
+        assertEquals("c2", JoinConditionParser.extractJoinAliasForTable(
+                "left join a08tbankinfo c2 on c2.bkcd=a.RCVBRN", "A08TBANKINFO"));
+        assertEquals(null, JoinConditionParser.extractJoinAliasForTable(
+                "left join a08tbankinfo c2 on c2.bkcd=a.RCVBRN", "OTHER"));
+    }
 }

@@ -20,7 +20,7 @@ public class TableMapping {
     private final List<LeftJoinSpec> leftJoins = new ArrayList<LeftJoinSpec>();
     private final List<String> unsupportedJoins = new ArrayList<String>();
     private final List<String> relationNotes = new ArrayList<String>();
-    /** sourceTable(upper) -> alias */
+    /** sourceTable(upper) -> 默认别名（同表多 JOIN 时仅为首次出现的别名，字段级以本行关联条件为准） */
     private final Map<String, String> tableAliases = new LinkedHashMap<String, String>();
     private final List<FieldMapping> fields = new ArrayList<FieldMapping>();
 

@@ -125,7 +125,8 @@ public final class JoinConditionParser {
         }
 
         Map<String, String> whereByKey = new LinkedHashMap<String, String>();
-        Map<String, LeftJoinSpec> joinByTable = new LinkedHashMap<String, LeftJoinSpec>();
+        // 按别名去重：同一副表可多条 JOIN（不同别名）；同别名且 ON/类型一致则合并
+        Map<String, LeftJoinSpec> joinByAlias = new LinkedHashMap<String, LeftJoinSpec>();
         Set<String> usedAliases = new HashSet<String>();
         if (!Strings.isBlank(primaryAlias)) {
             usedAliases.add(primaryAlias.toLowerCase(Locale.ROOT));
@@ -149,7 +150,7 @@ public final class JoinConditionParser {
                         break;
                     case LEFT_JOIN:
                     case INNER_JOIN:
-                        autoAliasOrd = addJoin(result, joinByTable, usedAliases, c, primaryAlias, autoAliasOrd);
+                        autoAliasOrd = addJoin(result, joinByAlias, usedAliases, c, primaryAlias, autoAliasOrd);
                         break;
                     case OTHER_JOIN:
                         result.getUnsupportedJoins().add(c.getRaw());
@@ -168,51 +169,162 @@ public final class JoinConditionParser {
             result.setWherePredicate(whereByKey.values().iterator().next());
         }
 
-        result.getLeftJoins().addAll(joinByTable.values());
+        result.getLeftJoins().addAll(joinByAlias.values());
         return result;
     }
 
+    /**
+     * 从字段行「库表关联条件」中解析与源表匹配的 JOIN 别名（Excel 原文别名；可能已被自动改名）。
+     */
+    public static String extractJoinAliasForTable(String rawJoinCondition, String sourceTable) {
+        ClassifiedCondition c = findJoinForTable(rawJoinCondition, sourceTable);
+        if (c == null || Strings.isBlank(c.getAlias())) {
+            return null;
+        }
+        return c.getAlias().trim();
+    }
+
+    /**
+     * 解析字段应使用的 JOIN 别名：按「JOIN 表 + ON」匹配已解析的 LeftJoinSpec
+     * （兼容同表多关联时 Excel 共用别名、生成器自动改名；
+     *  以及源表写成主表、真实列来自副表 JOIN 的写法）。
+     */
+    public static String resolveJoinAlias(String rawJoinCondition,
+                                          String sourceTable,
+                                          List<LeftJoinSpec> joins,
+                                          String primaryAlias) {
+        ClassifiedCondition c = findJoinForTable(rawJoinCondition, sourceTable);
+        if (c == null) {
+            c = firstJoinCondition(rawJoinCondition);
+        }
+        if (c == null) {
+            return null;
+        }
+        String on = rewritePrimaryAlias(c.getPredicate(), primaryAlias);
+        String fieldCanon = canonicalizeOn(on, c.getAlias());
+        if (joins != null && c.getTableName() != null) {
+            for (LeftJoinSpec lj : joins) {
+                if (lj.getTableName() == null) {
+                    continue;
+                }
+                if (!lj.getTableName().equalsIgnoreCase(c.getTableName().trim())) {
+                    continue;
+                }
+                if (fieldCanon.equals(canonicalizeOn(lj.getOnPredicate(), lj.getAlias()))) {
+                    return lj.getAlias();
+                }
+            }
+        }
+        return Strings.isBlank(c.getAlias()) ? null : c.getAlias().trim();
+    }
+
+    private static ClassifiedCondition findJoinForTable(String rawJoinCondition, String sourceTable) {
+        if (Strings.isBlank(rawJoinCondition) || Strings.isBlank(sourceTable)) {
+            return null;
+        }
+        String want = sourceTable.trim().toUpperCase(Locale.ROOT);
+        for (ClassifiedCondition c : extractConditions(rawJoinCondition)) {
+            if (c.getKind() != ConditionKind.LEFT_JOIN && c.getKind() != ConditionKind.INNER_JOIN) {
+                continue;
+            }
+            if (c.getTableName() == null) {
+                continue;
+            }
+            if (want.equals(c.getTableName().trim().toUpperCase(Locale.ROOT))) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private static ClassifiedCondition firstJoinCondition(String rawJoinCondition) {
+        if (Strings.isBlank(rawJoinCondition)) {
+            return null;
+        }
+        for (ClassifiedCondition c : extractConditions(rawJoinCondition)) {
+            if (c.getKind() == ConditionKind.LEFT_JOIN || c.getKind() == ConditionKind.INNER_JOIN) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    /** 将 ON 中副表别名前缀归一，便于「自动改名前后」按 ON 语义匹配。 */
+    static String canonicalizeOn(String onPredicate, String joinAlias) {
+        if (Strings.isBlank(onPredicate)) {
+            return "";
+        }
+        String x = onPredicate;
+        if (!Strings.isBlank(joinAlias)) {
+            x = x.replaceAll("(?i)\\b" + Pattern.quote(joinAlias.trim()) + "\\.", "#j.");
+        }
+        return normalizeKey(x);
+    }
+
+    private static String rewriteJoinSelfAlias(String onPredicate, String fromAlias, String toAlias) {
+        if (Strings.isBlank(onPredicate) || Strings.isBlank(fromAlias) || Strings.isBlank(toAlias)) {
+            return onPredicate;
+        }
+        if (fromAlias.equalsIgnoreCase(toAlias)) {
+            return onPredicate;
+        }
+        return onPredicate.replaceAll("(?i)\\b" + Pattern.quote(fromAlias.trim()) + "\\.", toAlias + ".");
+    }
+
     private static int addJoin(RelationParseResult result,
-                               Map<String, LeftJoinSpec> joinByTable,
+                               Map<String, LeftJoinSpec> joinByAlias,
                                Set<String> usedAliases,
                                ClassifiedCondition c,
                                String primaryAlias,
                                int autoAliasOrd) {
-        String tableKey = c.getTableName().toUpperCase(Locale.ROOT);
         String joinType = c.getKind() == ConditionKind.INNER_JOIN
                 ? LeftJoinSpec.TYPE_INNER
                 : LeftJoinSpec.TYPE_LEFT;
         String on = rewritePrimaryAlias(c.getPredicate(), primaryAlias);
-        LeftJoinSpec existing = joinByTable.get(tableKey);
-        if (existing != null) {
-            boolean sameOn = normalizeKey(existing.getOnPredicate()).equals(normalizeKey(on));
-            boolean sameType = existing.getJoinType().equalsIgnoreCase(joinType);
-            if (!sameOn || !sameType) {
-                result.setLeftJoinConflict(true);
-            }
-            return autoAliasOrd;
-        }
 
         String alias = c.getAlias();
-        boolean autoAssigned = false;
         if (Strings.isBlank(alias)) {
             alias = nextJoinAlias(primaryAlias, usedAliases);
-            autoAssigned = true;
             autoAliasOrd++;
             result.getNotes().add(joinType + " JOIN " + c.getTableName() + " 自动分配别名 " + alias);
-        } else if (usedAliases.contains(alias.toLowerCase(Locale.ROOT))) {
-            String requested = alias;
-            alias = nextJoinAlias(primaryAlias, usedAliases);
-            autoAssigned = true;
-            autoAliasOrd++;
-            result.getNotes().add(joinType + " JOIN " + c.getTableName()
-                    + " 别名 " + requested + " 冲突，自动改为 " + alias);
         }
-        usedAliases.add(alias.toLowerCase(Locale.ROOT));
-        joinByTable.put(tableKey, new LeftJoinSpec(c.getTableName(), alias, on, c.getRaw(), joinType));
-        if (!autoAssigned && c.getRaw() != null && normalizeKey(c.getRaw()).contains(" a.")) {
-            result.getNotes().add(joinType + " JOIN ON 中的 a. 已改写为 " + primaryAlias + ".");
-        } else if (c.getRaw() != null && normalizeKey(c.getRaw()).contains(" a.")) {
+
+        String aliasKey = alias.toLowerCase(Locale.ROOT);
+        LeftJoinSpec existing = joinByAlias.get(aliasKey);
+        if (existing != null) {
+            boolean sameTable = existing.getTableName().equalsIgnoreCase(c.getTableName());
+            boolean sameOn = canonicalizeOn(existing.getOnPredicate(), existing.getAlias())
+                    .equals(canonicalizeOn(on, alias));
+            boolean sameType = existing.getJoinType().equalsIgnoreCase(joinType);
+            if (sameTable && sameOn && sameType) {
+                return autoAliasOrd; // 同别名相同 JOIN：合并
+            }
+            // 同别名冲突（不同表，或同表不同 ON/类型）：自动改别名
+            String oldAlias = alias;
+            alias = nextJoinAlias(primaryAlias, usedAliases);
+            aliasKey = alias.toLowerCase(Locale.ROOT);
+            autoAliasOrd++;
+            on = rewriteJoinSelfAlias(on, oldAlias, alias);
+            if (sameTable) {
+                result.getNotes().add(joinType + " JOIN " + c.getTableName()
+                        + " 别名 " + oldAlias + " 已用于不同 ON，自动改为 " + alias);
+            } else {
+                result.getNotes().add(joinType + " JOIN " + c.getTableName()
+                        + " 别名 " + oldAlias + " 已被其他表占用，自动改为 " + alias);
+            }
+        } else if (usedAliases.contains(aliasKey)) {
+            String oldAlias = alias;
+            alias = nextJoinAlias(primaryAlias, usedAliases);
+            aliasKey = alias.toLowerCase(Locale.ROOT);
+            autoAliasOrd++;
+            on = rewriteJoinSelfAlias(on, oldAlias, alias);
+            result.getNotes().add(joinType + " JOIN " + c.getTableName()
+                    + " 别名 " + oldAlias + " 冲突，自动改为 " + alias);
+        }
+
+        usedAliases.add(aliasKey);
+        joinByAlias.put(aliasKey, new LeftJoinSpec(c.getTableName(), alias, on, c.getRaw(), joinType));
+        if (c.getRaw() != null && normalizeKey(c.getRaw()).contains(" a.")) {
             result.getNotes().add(joinType + " JOIN ON 中的 a. 已改写为 " + primaryAlias + ".");
         }
         return autoAliasOrd;

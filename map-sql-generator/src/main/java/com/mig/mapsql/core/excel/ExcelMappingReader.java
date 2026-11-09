@@ -186,7 +186,11 @@ public class ExcelMappingReader {
         table.getRelationNotes().addAll(parsed.getNotes());
 
         for (LeftJoinSpec lj : table.getLeftJoins()) {
-            table.getTableAliases().put(lj.getTableName().toUpperCase(Locale.ROOT), lj.getAlias());
+            // 同表多别名时保留首次别名作回退；字段渲染优先用本行关联条件中的别名
+            String key = lj.getTableName().toUpperCase(Locale.ROOT);
+            if (!table.getTableAliases().containsKey(key)) {
+                table.getTableAliases().put(key, lj.getAlias());
+            }
         }
     }
 

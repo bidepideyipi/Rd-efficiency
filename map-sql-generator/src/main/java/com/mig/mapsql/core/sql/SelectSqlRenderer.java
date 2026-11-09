@@ -124,7 +124,11 @@ public class SelectSqlRenderer {
             throw new IllegalStateException("缺少源列: " + targetCol);
         }
 
-        String alias = table.resolveAlias(f.getSourceTable(), primaryAlias);
+        String alias = JoinConditionParser.resolveJoinAlias(
+                f.getJoinCondition(), f.getSourceTable(), table.getLeftJoins(), primaryAlias);
+        if (Strings.isBlank(alias)) {
+            alias = table.resolveAlias(f.getSourceTable(), primaryAlias);
+        }
         String base = alias + "." + f.getSourceColumn().trim();
         boolean needCast = TypeCastSupport.typeDiffers(f.getSourceType(), f.getTargetType());
         if (needCast) {
