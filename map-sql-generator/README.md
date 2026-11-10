@@ -1,9 +1,10 @@
 # 研发效能工具（map-sql-generator）
 
-本机研发效能套件（Spring Boot），当前包含两个工具：
+本机研发效能套件（Spring Boot），当前包含：
 
 1. **Excel → SQL**：将「数据迁移中间表映射关系」Excel 生成 Oracle `SELECT`（一表一 `{表名}.sql`）
-2. **代码扫描 dealcode**：扫描工程目录下 `.fc`，提取 `paramList` 中的 `dealcode` / `dealmsg`，输出 CSV（明细后附 dealcode 总览统计）
+2. **库 ↔ Excel 对比**：OceanBase（Oracle 模式）基表结构 vs 映射 Excel 左侧目标栏位；类型不同标黄改写，库多则追加，Excel 多则标红
+3. **代码扫描 dealcode**：扫描工程目录下 `.fc`，提取 `paramList` 中的 `dealcode` / `dealmsg`，输出 CSV
 
 要求：**JDK 8+**（工程按 1.8 编译；Spring Boot 2.7.18）。
 
@@ -31,6 +32,7 @@ mvn spring-boot:run
 `src/main/resources/application.yml`：
 
 - `mig.default-export-dir`：页面默认输出目录
+- `mig.datasources`：OceanBase Oracle 模式数据源列表（`id` / `jdbcUrl` / `schema` / `enabled`）
 
 ### 生成规则摘要
 
@@ -44,7 +46,54 @@ mvn spring-boot:run
 
 ---
 
-## 工具 2：代码扫描 dealcode
+## 工具 2：库 ↔ Excel 对比
+
+1. 在 `application.yml` 配置 `mig.datasources`，将目标库 `enabled: true`
+2. 打开「库 ↔ Excel 对比」：选择数据源 → 上传 V0.4 映射 Excel → 下载标注结果
+3. 规则（以库为准，对齐 Excel **左侧目标栏位**）：
+   - 数据类型/长度不同 → 改写并 **黄色** 标注
+   - 库有、Excel 无 → **追加**行（备注 `【DB新增】`）
+   - Excel 有、库无 → **红色** 标注，备注提醒人工删除
+4. 汇总见结果文件中的 `_DB_EXCEL_DIFF` Sheet
+
+API：`GET /api/datasources`、`POST /api/datasources/test`、`POST /api/excel-db-diff`
+
+---
+
+## 工具 3：数据标准扫描
+
+按 SQLite 数标规则扫描 OceanBase（Oracle 模式）基表，生成 ALTER SQL。
+
+规则类型：
+
+- `TYPE`：按数据类型族匹配，如 `CHAR` → `VARCHAR2({n})`，`CLOB` → `VARCHAR2(400)`（`{n}`/`{p}`/`{s}` 取自当前列）
+- `COLUMN`：字段名全匹配（忽略大小写），如 `AMOUNT` → `NUMBER(22,2)`
+
+CHAR / CLOB / NUMBER 等不能直接 `MODIFY` 时，生成**四步重建**：
+
+1. `ALTER TABLE ... ADD (col_MIGTMP ...)`
+2. `COMMENT ON COLUMN ...`（复制原 comment）
+3. `UPDATE ... SET col_MIGTMP = ...`（拷贝原始值）
+4. `DROP COLUMN` 旧字段 + `RENAME COLUMN` 临时字段改回原名
+
+### 配置
+
+```yaml
+mig:
+  standard-db-path: ${user.home}/mig/data-standard.db
+```
+
+首次启动自动建表并写入默认规则（CHAR / CLOB / AMOUNT）。
+
+### API
+
+- `GET/POST/PUT/DELETE /api/standard/rules`
+- `POST /api/standard/scan` — `{ "datasourceId": "..." }` → 命中列表 + SQL 文本
+- `POST /api/standard/scan/export` — 下载 `.sql`
+
+---
+
+## 工具 4：代码扫描 dealcode
 
 扫描指定工程根目录下所有 `.fc` 文件：
 

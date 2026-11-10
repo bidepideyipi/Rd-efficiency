@@ -45,13 +45,36 @@ class SelectSqlRendererTest {
         assertTrue(sql.contains("CASE WHEN LENGTH(s.FUNCTION2) > 15 THEN SUBSTR(s.FUNCTION2, 1, 15) ELSE s.FUNCTION2 END"));
         assertTrue(sql.contains("(s.FLAG1) AS FLAG"));
         assertTrue(!sql.contains("TO_CHAR(s.FLAG1)"));
-        assertTrue(sql.contains("TO_NUMBER(NULLIF(TRIM(s.AMOUNT), ''))"));
+        assertTrue(sql.contains("TO_NUMBER(TRIM(s.AMOUNT))"));
         assertTrue(sql.contains("('800001') AS CLEARBRNO"));
         assertTrue(!sql.contains("WORKDATE"));
         assertTrue(sql.contains("{{beginTm}}"));
         assertTrue(sql.contains("{{endTm}}"));
         assertTrue(sql.contains("{{tmColumn}}"));
         assertTrue(sql.contains("FUNCTION2 IN ('ibps.101.001.01')"));
+    }
+
+    @Test
+    void noBusinessWhereOmitsTimeShardAndSelectAnd() {
+        GeneratorProperties props = new GeneratorProperties();
+        SelectSqlRenderer renderer = new SelectSqlRenderer(props);
+
+        TableMapping table = new TableMapping();
+        table.setSheetName("IBPS_MOBILEINFO");
+        table.setTargetTable("IBPS_MOBILEINFO");
+        table.setSourceTable("IBPS_MOBILEINFO");
+        // 无业务 WHERE（对应 Excel 仅写 select * from …）
+        table.setJoinPredicate(null);
+
+        FieldMapping direct = field("ID", MappingType.DIRECT, "ID", "VARCHAR2", "32", "VARCHAR2", "32", null);
+        table.getFields().add(direct);
+
+        String sql = renderer.render(table);
+        assertTrue(sql.contains("FROM IBPS_MOBILEINFO s"));
+        assertTrue(!sql.contains("WHERE"));
+        assertTrue(!sql.contains("{{tmColumn}}"));
+        assertTrue(!sql.contains("{{beginTm}}"));
+        assertTrue(!sql.toLowerCase().contains("select * from"));
     }
 
     private static FieldMapping field(String tgt, MappingType type, String src,

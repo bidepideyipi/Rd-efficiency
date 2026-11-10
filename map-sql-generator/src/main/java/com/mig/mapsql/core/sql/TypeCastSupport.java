@@ -82,7 +82,8 @@ public final class TypeCastSupport {
         String s = normalizeType(sourceType);
         String t = normalizeType(targetType);
         if (isCharType(s) && isNumberType(t)) {
-            return "TO_NUMBER(NULLIF(TRIM(" + baseExpr + "), ''))";
+            // Oracle 中 '' 即为 NULL，NULLIF(..., '') 无效；TRIM 空白串已得 NULL
+            return "TO_NUMBER(TRIM(" + baseExpr + "))";
         }
         if (isNumberType(s) && isCharType(t)) {
             return "TO_CHAR(" + baseExpr + ")";

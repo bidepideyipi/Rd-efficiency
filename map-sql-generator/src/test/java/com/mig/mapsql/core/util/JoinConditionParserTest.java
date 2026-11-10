@@ -138,4 +138,15 @@ class JoinConditionParserTest {
         assertEquals(null, JoinConditionParser.extractJoinAliasForTable(
                 "left join a08tbankinfo c2 on c2.bkcd=a.RCVBRN", "OTHER"));
     }
+
+    @Test
+    void selectFromWithoutWhereHasEmptyPredicate() {
+        JoinConditionParser.RelationParseResult r = JoinConditionParser.parseAll(Arrays.asList(
+                "select * from IBPS_MOBILEINFO"
+        ), "s");
+        assertEquals(null, r.getWherePredicate());
+        assertTrue(r.getWhereSourceTables().contains("IBPS_MOBILEINFO")
+                || r.getWhereSourceTables().stream().anyMatch(t -> t.equalsIgnoreCase("IBPS_MOBILEINFO")));
+        assertTrue(r.getLeftJoins().isEmpty());
+    }
 }

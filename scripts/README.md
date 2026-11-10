@@ -6,7 +6,7 @@
 |------|------|
 | `export-job.conf` | 路径、源/目标连接、表清单、时间范围、sqlldr 参数 |
 | `export_by_map.sh` | 单表单窗导出 → `.dat` + `.ctl` |
-| `export_batch.sh` | 表清单 × 按天切分，逐次导出 |
+| `export_batch.sh` | 表清单 × 按自然月切分，逐次导出 |
 | `load_by_map.sh` | 单表单窗装载：对已有 `.ctl` 执行 sqlldr |
 | `load_batch.sh` | 批量装载：优先按导出清单 OK 行执行 |
 
@@ -33,7 +33,7 @@ sqlldrDirect = false
 
 start = 20240301
 end = 20270301
-interval = 1d
+interval = 1m
 onError = stop
 
 tables =
@@ -53,7 +53,7 @@ tables =
 | `sqlldrRows` | `load_by_map.sh` | 可选，默认 `5000` |
 | `sqlldrDirect` | `load_by_map.sh` | 可选，默认 `false` |
 | `start` / `end` | export_batch；load_batch 无清单时 | 左闭右开 |
-| `interval` | 同上 | 只按天，如 `1d` |
+| `interval` | 同上 | 只按自然月，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | export_batch / load_batch | `stop` / `continue` |
 | `tables` | export_batch；load_batch 无清单时 | **每表一行** `表名 = 时间列`（必填，无全局默认） |
 
@@ -68,8 +68,8 @@ tables =
 产物示例：
 
 ```text
-{表名}_20240301_20240302.dat
-{表名}_20240301_20240302.ctl
+{表名}_20240301_20240401.dat
+{表名}_20240301_20240401.ctl
 {outDir}/_batch/export-manifest.txt
 ```
 

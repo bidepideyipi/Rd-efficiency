@@ -219,6 +219,8 @@
   <nav class="side">
     <div class="brand">研发效能工具<small>本地工程效率套件</small></div>
     <button type="button" class="tool active" data-tool="sql">Excel → SQL</button>
+    <button type="button" class="tool" data-tool="dbexcel">库 ↔ Excel 对比</button>
+    <button type="button" class="tool" data-tool="standard">数据标准扫描</button>
     <button type="button" class="tool" data-tool="scan">代码扫描 dealcode</button>
   </nav>
   <main>
@@ -263,6 +265,107 @@
       <section class="card">
         <label>生成结果</label>
         <pre id="result">等待操作…</pre>
+      </section>
+    </section>
+
+    <section id="panel-dbexcel" class="panel">
+      <h1>库 ↔ Excel 对比 <span class="pill">OB Oracle → 标注回写</span></h1>
+      <p class="sub">以 OceanBase（Oracle 模式）基表结构为准，对比映射 Excel 左侧目标栏位：类型不同标黄并改写；库有 Excel 无则追加；Excel 有库无则标红提醒删除。</p>
+
+      <section class="card">
+        <label>数据源</label>
+        <div class="row">
+          <div>
+            <select id="dsSelect" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+              <option value="">加载中…</option>
+            </select>
+          </div>
+          <button class="secondary" type="button" id="btnTestDs">测试连接</button>
+        </div>
+        <p id="dsStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <label>上传映射 Excel（.xlsx）</label>
+        <div class="drop" id="dropDiff">
+          <p>拖拽文件到此处，或点击选择</p>
+          <input id="diffFile" type="file" accept=".xlsx" style="margin-top:10px"/>
+          <p id="diffFileInfo" class="sub" style="margin-top:10px"></p>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnDiff" disabled>开始对比并下载</button>
+        </div>
+        <pre id="diffResult">等待操作…</pre>
+      </section>
+    </section>
+
+    <section id="panel-standard" class="panel">
+      <h1>数据标准扫描 <span class="pill">SQLite 规则 → ALTER SQL</span></h1>
+      <p class="sub">按 TYPE（如 CHAR→VARCHAR2、CLOB→VARCHAR2）或 COLUMN 全匹配（如 AMOUNT→NUMBER(22,2)）扫描基表。CHAR / CLOB / NUMBER 不能直接转换时生成四步重建：新增字段 → 复制 COMMENT → 拷贝值 → 删旧改名。</p>
+
+      <section class="card">
+        <label>数据源</label>
+        <div class="row">
+          <div>
+            <select id="stdDsSelect" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+              <option value="">加载中…</option>
+            </select>
+          </div>
+          <button class="secondary" type="button" id="btnStdTestDs">测试连接</button>
+          <button type="button" id="btnStdScan">扫描生成 SQL</button>
+          <button class="secondary" type="button" id="btnStdDownload" disabled>下载 .sql</button>
+        </div>
+        <p id="stdDsStatus" class="sub" style="margin:8px 0 0"></p>
+        <div class="summary" id="stdSummary" style="margin-top:12px"></div>
+        <label style="margin-top:8px">生成的 ALTER SQL</label>
+        <pre id="stdResult">等待操作…</pre>
+      </section>
+
+      <section class="card">
+        <label>数标规则（SQLite）</label>
+        <div class="toolbar">
+          <button class="secondary" type="button" id="btnStdReload">刷新</button>
+          <button type="button" id="btnStdAdd">新增规则</button>
+        </div>
+        <div id="stdRules" style="overflow:auto"></div>
+        <div id="stdRuleForm" style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+          <input type="hidden" id="stdRuleId"/>
+          <div class="row" style="margin-bottom:10px">
+            <div>
+              <label>类型</label>
+              <select id="stdRuleType" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+                <option value="TYPE">TYPE（按数据类型）</option>
+                <option value="COLUMN">COLUMN（字段名全匹配）</option>
+              </select>
+            </div>
+            <div>
+              <label>匹配表达式</label>
+              <input id="stdMatchExpr" type="text" placeholder="CHAR / CLOB / AMOUNT"/>
+            </div>
+            <div>
+              <label>目标类型</label>
+              <input id="stdTargetType" type="text" placeholder="VARCHAR2({n}) / NUMBER(22,2)"/>
+            </div>
+          </div>
+          <div class="row" style="margin-bottom:10px">
+            <div>
+              <label>优先级（越小越先）</label>
+              <input id="stdPriority" type="text" value="100"/>
+            </div>
+            <div>
+              <label>备注</label>
+              <input id="stdRemark" type="text" placeholder="可选"/>
+            </div>
+            <div style="display:flex;gap:16px;align-items:end;padding-bottom:8px">
+              <label class="item"><input type="checkbox" id="stdRebuild" checked/> 四步重建</label>
+              <label class="item"><input type="checkbox" id="stdEnabled" checked/> 启用</label>
+            </div>
+          </div>
+          <div class="toolbar">
+            <button type="button" id="btnStdSave">保存</button>
+            <button class="secondary" type="button" id="btnStdCancel">取消</button>
+          </div>
+        </div>
       </section>
     </section>
 
@@ -505,9 +608,274 @@
     URL.revokeObjectURL(url);
   };
 
-  Promise.all([initSql(), initScan()]).catch(e => {
+  async function initDiff() {
+    const res = await fetch('/api/datasources');
+    const list = await res.json();
+    const sel = $('dsSelect');
+    if (!list.length) {
+      sel.innerHTML = '<option value="">未配置启用的数据源（mig.datasources）</option>';
+      $('dsStatus').innerHTML = '<span class="err">请在 application.yml 配置 mig.datasources 并 enabled: true</span>';
+      return;
+    }
+    sel.innerHTML = list.map(d =>
+      '<option value="' + d.id + '">' + d.id + (d.name ? ' — ' + d.name : '') +
+      (d.schema ? ' [' + d.schema + ']' : '') + '</option>'
+    ).join('');
+    $('dsStatus').textContent = '共 ' + list.length + ' 个可用数据源';
+  }
+
+  $('btnTestDs').onclick = async () => {
+    const id = $('dsSelect').value;
+    if (!id) return;
+    $('dsStatus').textContent = '测试中…';
+    const fd = new FormData();
+    fd.append('id', id);
+    const res = await fetch('/api/datasources/test', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('dsStatus').innerHTML = '<span class="err">' + (data.error || '连接失败') + '</span>';
+      return;
+    }
+    $('dsStatus').innerHTML = '<span class="ok">连接成功：</span>' + id;
+  };
+
+  const dropDiff = $('dropDiff');
+  let diffFileObj = null;
+  dropDiff.addEventListener('dragover', (e) => { e.preventDefault(); dropDiff.classList.add('drag'); });
+  dropDiff.addEventListener('dragleave', () => dropDiff.classList.remove('drag'));
+  dropDiff.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropDiff.classList.remove('drag');
+    if (e.dataTransfer.files.length) {
+      diffFileObj = e.dataTransfer.files[0];
+      $('diffFileInfo').textContent = diffFileObj.name;
+      $('btnDiff').disabled = !$('dsSelect').value;
+    }
+  });
+  $('diffFile').addEventListener('click', () => { $('diffFile').value = ''; });
+  $('diffFile').onchange = () => {
+    if ($('diffFile').files[0]) {
+      diffFileObj = $('diffFile').files[0];
+      $('diffFileInfo').textContent = diffFileObj.name;
+      $('btnDiff').disabled = !$('dsSelect').value;
+      $('diffFile').value = '';
+    }
+  };
+  $('dsSelect').onchange = () => {
+    $('btnDiff').disabled = !($('dsSelect').value && diffFileObj);
+  };
+
+  $('btnDiff').onclick = async () => {
+    if (!diffFileObj || !$('dsSelect').value) return;
+    $('diffResult').textContent = '对比中…';
+    const fd = new FormData();
+    fd.append('datasourceId', $('dsSelect').value);
+    fd.append('file', diffFileObj);
+    const res = await fetch('/api/excel-db-diff', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      $('diffResult').textContent = data.error || '对比失败';
+      return;
+    }
+    const summary = res.headers.get('X-Diff-Summary') || '';
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'excel-db-diff.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    $('diffResult').textContent = '已下载 excel-db-diff.xlsx\n' + summary +
+      '\n\n说明：黄=类型已按库改写；红=Excel 有库无（请人工删）；新增行备注【DB新增】；汇总见 Sheet _DB_EXCEL_DIFF';
+  };
+
+  let lastStdSql = '';
+  let lastStdDs = '';
+
+  async function fillDsSelect(selId, statusId) {
+    const res = await fetch('/api/datasources');
+    const list = await res.json();
+    const sel = $(selId);
+    if (!list.length) {
+      sel.innerHTML = '<option value="">未配置启用的数据源（mig.datasources）</option>';
+      $(statusId).innerHTML = '<span class="err">请在 application.yml 配置 mig.datasources 并 enabled: true</span>';
+      return;
+    }
+    sel.innerHTML = list.map(d =>
+      '<option value="' + d.id + '">' + d.id + (d.name ? ' — ' + d.name : '') +
+      (d.schema ? ' [' + d.schema + ']' : '') + '</option>'
+    ).join('');
+    $(statusId).textContent = '共 ' + list.length + ' 个可用数据源';
+  }
+
+  async function initStandard() {
+    await fillDsSelect('stdDsSelect', 'stdDsStatus');
+    await loadStdRules();
+  }
+
+  $('btnStdTestDs').onclick = async () => {
+    const id = $('stdDsSelect').value;
+    if (!id) return;
+    $('stdDsStatus').textContent = '测试中…';
+    const fd = new FormData();
+    fd.append('id', id);
+    const res = await fetch('/api/datasources/test', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('stdDsStatus').innerHTML = '<span class="err">' + (data.error || '连接失败') + '</span>';
+      return;
+    }
+    $('stdDsStatus').innerHTML = '<span class="ok">连接成功：</span>' + id;
+  };
+
+  async function loadStdRules() {
+    const res = await fetch('/api/standard/rules');
+    const rules = await res.json();
+    if (!rules.length) {
+      $('stdRules').innerHTML = '<em style="color:#5b6775">暂无规则</em>';
+      return;
+    }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+      '<thead><tr style="text-align:left;border-bottom:1px solid var(--line)">' +
+      '<th style="padding:6px">ID</th><th>类型</th><th>匹配</th><th>目标</th><th>重建</th><th>启用</th><th>优先级</th><th></th></tr></thead><tbody>';
+    rules.forEach(r => {
+      html += '<tr style="border-bottom:1px solid #eef2f6">' +
+        '<td style="padding:6px">' + r.id + '</td>' +
+        '<td>' + r.ruleType + '</td>' +
+        '<td><code>' + esc(r.matchExpr) + '</code></td>' +
+        '<td><code>' + esc(r.targetType) + '</code></td>' +
+        '<td>' + (r.rebuild ? '是' : '否') + '</td>' +
+        '<td>' + (r.enabled ? '是' : '否') + '</td>' +
+        '<td>' + r.priority + '</td>' +
+        '<td style="white-space:nowrap">' +
+        '<button class="secondary" type="button" data-edit="' + r.id + '" style="padding:4px 8px;margin-right:4px">编辑</button>' +
+        '<button class="secondary" type="button" data-del="' + r.id + '" style="padding:4px 8px">删</button>' +
+        '</td></tr>';
+    });
+    html += '</tbody></table>';
+    $('stdRules').innerHTML = html;
+    $('stdRules').querySelectorAll('[data-edit]').forEach(btn => {
+      btn.onclick = () => {
+        const r = rules.find(x => String(x.id) === btn.getAttribute('data-edit'));
+        if (!r) return;
+        openStdForm(r);
+      };
+    });
+    $('stdRules').querySelectorAll('[data-del]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('删除规则 #' + btn.getAttribute('data-del') + '？')) return;
+        const res = await fetch('/api/standard/rules/' + btn.getAttribute('data-del'), { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || '删除失败');
+          return;
+        }
+        await loadStdRules();
+      };
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function openStdForm(r) {
+    $('stdRuleForm').style.display = 'block';
+    $('stdRuleId').value = r && r.id != null ? r.id : '';
+    $('stdRuleType').value = (r && r.ruleType) || 'TYPE';
+    $('stdMatchExpr').value = (r && r.matchExpr) || '';
+    $('stdTargetType').value = (r && r.targetType) || '';
+    $('stdPriority').value = (r && r.priority != null) ? r.priority : 100;
+    $('stdRemark').value = (r && r.remark) || '';
+    $('stdRebuild').checked = !r || r.rebuild !== false;
+    $('stdEnabled').checked = !r || r.enabled !== false;
+  }
+
+  $('btnStdAdd').onclick = () => openStdForm(null);
+  $('btnStdCancel').onclick = () => { $('stdRuleForm').style.display = 'none'; };
+  $('btnStdReload').onclick = () => loadStdRules();
+
+  $('btnStdSave').onclick = async () => {
+    const id = $('stdRuleId').value;
+    const body = {
+      ruleType: $('stdRuleType').value,
+      matchExpr: $('stdMatchExpr').value.trim(),
+      targetType: $('stdTargetType').value.trim(),
+      priority: parseInt($('stdPriority').value, 10) || 100,
+      remark: $('stdRemark').value.trim(),
+      rebuild: $('stdRebuild').checked,
+      enabled: $('stdEnabled').checked
+    };
+    const res = await fetch(id ? '/api/standard/rules/' + id : '/api/standard/rules', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || '保存失败');
+      return;
+    }
+    $('stdRuleForm').style.display = 'none';
+    await loadStdRules();
+  };
+
+  $('btnStdScan').onclick = async () => {
+    const id = $('stdDsSelect').value;
+    if (!id) return;
+    $('stdResult').textContent = '扫描中…';
+    $('btnStdDownload').disabled = true;
+    const res = await fetch('/api/standard/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ datasourceId: id })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('stdResult').textContent = data.error || '扫描失败';
+      return;
+    }
+    lastStdSql = data.sqlScript || '';
+    lastStdDs = id;
+    $('stdSummary').innerHTML =
+      '<span>owner=<strong>' + esc(data.owner) + '</strong></span>' +
+      '<span>表=<strong>' + data.tablesScanned + '</strong></span>' +
+      '<span>命中=<strong>' + data.hitCount + '</strong></span>';
+    $('stdResult').textContent = lastStdSql || '（无命中）';
+    $('btnStdDownload').disabled = !lastStdSql;
+  };
+
+  $('btnStdDownload').onclick = async () => {
+    if (!lastStdDs) return;
+    const res = await fetch('/api/standard/scan/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ datasourceId: lastStdDs })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || '下载失败');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'standard-alter-' + lastStdDs + '.sql';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  Promise.all([initSql(), initScan(), initDiff(), initStandard()]).catch(e => {
     $('dirStatus').textContent = e.message;
     $('projectStatus').textContent = e.message;
+    $('dsStatus').textContent = e.message;
+    $('stdDsStatus').textContent = e.message;
   });
 </script>
 </body>

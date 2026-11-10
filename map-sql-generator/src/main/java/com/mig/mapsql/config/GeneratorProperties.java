@@ -19,6 +19,8 @@ public class GeneratorProperties {
     private String joinConditionConflict = "error";
     private boolean requireSqlRuleWhenPresent = true;
     private boolean writeMeta = true;
+    /** 数标 SQLite 文件路径 */
+    private String standardDbPath = System.getProperty("user.home") + "/mig/data-standard.db";
     private Scan scan = new Scan();
 
     public String getDefaultExportDir() {
@@ -115,6 +117,14 @@ public class GeneratorProperties {
 
     public void setWriteMeta(boolean writeMeta) {
         this.writeMeta = writeMeta;
+    }
+
+    public String getStandardDbPath() {
+        return standardDbPath;
+    }
+
+    public void setStandardDbPath(String standardDbPath) {
+        this.standardDbPath = standardDbPath;
     }
 
     public Scan getScan() {

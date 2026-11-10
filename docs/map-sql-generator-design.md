@@ -140,7 +140,7 @@
 | 源 → 目标 | 默认生成（无规则说明时） | 说明 |
 |-----------|--------------------------|------|
 | **`VARCHAR2` → `CHAR`**（字符型互转） | **不转换**，按 VARCHAR2 直迁 | 忽略类型差，仅走长度等规则 |
-| `VARCHAR2`/`CHAR` → `NUMBER` | `TO_NUMBER(NULLIF(TRIM(s.COL), ''))` | 对应 `04-类型转换` 样例金额字段 |
+| `VARCHAR2`/`CHAR` → `NUMBER` | `TO_NUMBER(TRIM(s.COL))` | Oracle 中 `''` 即 NULL，勿用 `NULLIF(...,'')`；对应 `04-类型转换` 样例金额字段 |
 | `NUMBER` → `VARCHAR2`/`CHAR` | `TO_CHAR(s.COL)` | |
 | `DATE` → `VARCHAR2` | `TO_CHAR(s.COL, '{dateFormat}')` | 默认 `YYYYMMDDHH24MISS`，可配置 |
 | `VARCHAR2` → `DATE` | `TO_DATE(s.COL, '{dateFormat}')` | |
@@ -153,7 +153,7 @@
 `AMOUNT`：源 `VARCHAR2(15)` → 目标 `NUMBER(22,2)`，无规则说明 →
 
 ```sql
-(TO_NUMBER(NULLIF(TRIM(s.AMOUNT), ''))) AS AMOUNT
+(TO_NUMBER(TRIM(s.AMOUNT))) AS AMOUNT
 ```
 
 ### 2A.3 长度不一致时的处理
@@ -371,7 +371,7 @@ SELECT
   -- 02 默认值
   ('800001') AS CLEARBRNO,
   -- 04 类型转换 VARCHAR2 → NUMBER
-  (TO_NUMBER(NULLIF(TRIM(s.AMOUNT), ''))) AS AMOUNT,
+  (TO_NUMBER(TRIM(s.AMOUNT))) AS AMOUNT,
   ...
 FROM A10TIBPSDETAILLOG s
 WHERE s.{{tmColumn}} >= '{{beginTm}}'
@@ -777,7 +777,7 @@ TRAILING NULLCOLS
 | 键 | 含义 |
 |----|------|
 | `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
-| `interval` | 只按天：`Nd`，如 `1d` |
+| `interval` | 只按自然月：`Nm`，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
 | `tables` | **每表必配时间列**：后续行 `表名 = TRANDATE\|TRANTIME\|WORKDATE\|SENDTIME`。无全局默认；已移除 `tmColumn` / `files` |
 
@@ -794,7 +794,7 @@ TRAILING NULLCOLS
 | 导出方式 | 客户端拉数（sqlplus），单线程，按时间窗切批 |
 | 装载方式 | sqlldr 按片执行对应 `.ctl` |
 | 单次建议 | 控制在百万～千万行，或单文件约数 GB 内 |
-| 不做的事 | 单次 SPOOL 硬导 1 亿行；不导出 CSV/JSON；不按自然月切分 |
+| 不做的事 | 单次 SPOOL 硬导 1 亿行；不导出 CSV/JSON；不按天切分 |
 
 ### 7.4 合约约束
 

@@ -105,6 +105,14 @@ public final class JoinConditionParser {
             return out;
         }
 
+        // select * from T [alias] 且无 WHERE：只记主表，谓词为空（避免把整段 select 塞进 AND）
+        Matcher fromOnly = SELECT_FROM_TABLE.matcher(text);
+        if (fromOnly.find()) {
+            String table = stripQuotes(fromOnly.group(1));
+            out.add(new ClassifiedCondition(ConditionKind.WHERE_SELECT, fromOnly.group(), table, null, null));
+            return out;
+        }
+
         out.add(new ClassifiedCondition(ConditionKind.WHERE_PLAIN, text, null, null, trimTrailingSemi(text)));
         return out;
     }

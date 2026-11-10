@@ -89,6 +89,10 @@ public class SelectSqlRenderer {
     }
 
     private String renderWhere(TableMapping table, String alias) {
+        // 无业务 WHERE（如仅写 select * from T）时不拼时间分片，也不生成 AND (select * from …)
+        if (Strings.isBlank(table.getJoinPredicate())) {
+            return "";
+        }
         StringBuilder where = new StringBuilder("WHERE ");
         if ("to_date".equalsIgnoreCase(properties.getTimePredicate())) {
             where.append(alias).append(".{{tmColumn}} >= TO_DATE('{{beginTm}}', '{{tmFormat}}')\n");
@@ -97,9 +101,7 @@ public class SelectSqlRenderer {
             where.append(alias).append(".{{tmColumn}} >= '{{beginTm}}'\n");
             where.append("  AND ").append(alias).append(".{{tmColumn}} <  '{{endTm}}'");
         }
-        if (!Strings.isBlank(table.getJoinPredicate())) {
-            where.append("\n  AND (\n    ").append(table.getJoinPredicate()).append("\n  )");
-        }
+        where.append("\n  AND (\n    ").append(table.getJoinPredicate()).append("\n  )");
         where.append("\n");
         return where.toString();
     }

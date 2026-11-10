@@ -109,6 +109,7 @@ ts_lt() {
   [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort | head -n 1)" == "$1" ]]
 }
 
+# 按自然月推进。start/end 建议落在月初（…01），避免月末日溢出。
 add_interval() {
   local ts="$1"
   local n="$2"
@@ -122,11 +123,11 @@ add_interval() {
       spec="${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:8:2}:${ts:10:2}:${ts:12:2}"
       fmt="+%Y%m%d%H%M%S"
     fi
-    out="$(date -d "${spec} + ${n} day" "${fmt}")"
+    out="$(date -d "${spec} + ${n} month" "${fmt}")"
   elif [[ "${#ts}" -eq 8 ]]; then
-    out="$(date -j -f "%Y%m%d" -v+"${n}d" "${ts}" "+%Y%m%d")"
+    out="$(date -j -f "%Y%m%d" -v+"${n}m" "${ts}" "+%Y%m%d")"
   else
-    out="$(date -j -f "%Y%m%d%H%M%S" -v+"${n}d" "${ts}" "+%Y%m%d%H%M%S")"
+    out="$(date -j -f "%Y%m%d%H%M%S" -v+"${n}m" "${ts}" "+%Y%m%d%H%M%S")"
   fi
   printf '%s' "${out}"
 }
@@ -160,8 +161,8 @@ else
     echo "export-manifest not found; need start/end/interval to scan slices (${CONF})" >&2
     exit 1
   fi
-  if [[ ! "${INTERVAL}" =~ ^([1-9][0-9]*)d$ ]]; then
-    echo "invalid interval: ${INTERVAL} (use Nd, e.g. 1d)" >&2
+  if [[ ! "${INTERVAL}" =~ ^([1-9][0-9]*)m$ ]]; then
+    echo "invalid interval: ${INTERVAL} (use Nm, e.g. 1m)" >&2
     exit 1
   fi
   INTERVAL_N="${BASH_REMATCH[1]}"
