@@ -779,7 +779,7 @@ TRAILING NULLCOLS
 | `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
 | `interval` | 只按自然月：`Nm`，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
-| `tables` | **每表必配时间列**：后续行 `表名 = TRANDATE\|TRANTIME\|WORKDATE\|SENDTIME`。无全局默认；已移除 `tmColumn` / `files` |
+| `tables` | **每表必配时间列**：后续行 `表名 = 时间列`（任意 Oracle 标识符）。无全局默认；已移除 `tmColumn` / `files` |
 
 ```bash
 ./export_batch.sh
@@ -800,7 +800,7 @@ TRAILING NULLCOLS
 
 1. 三个占位符名称固定，大小写敏感：`{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`。  
 2. `{表名}.sql` 以单条 `SELECT ... ;` 为主（可有注释）；SELECT 列表顺序 = Excel 非 `00` 映射行序 = `.dat` 字段序 = `.ctl` 列序。  
-3. Shell 侧必须对 `{{tmColumn}}` 做白名单校验后再替换。  
+3. Shell 侧对 `{{tmColumn}}` 做标识符格式校验后再替换（不限定列名集合）。  
 4. 运行时：**sqlplus** 导出无表头 **`0x01` `.dat`**；**sqlldr** 按同序 **`.ctl`** 装载。  
 5. 跳板机统一 `NLS_LANG` / `.ctl` `CHARACTERSET`，避免中文乱码。  
 6. 分隔符不用 `|`（源数据可能含 `|`）。

@@ -108,10 +108,11 @@ OUT_CTL="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.ctl"
 OUT_LOG="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.log"
 OUT_BAD="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.bad"
 
-case "${TM_COLUMN}" in
-  TRANDATE|TRANTIME|WORKDATE|SENDTIME) ;;
-  *) echo "invalid tmColumn: ${TM_COLUMN}" >&2; exit 1 ;;
-esac
+# 任意源表时间列均可；仅校验为可嵌入 s.{{tmColumn}} 的标识符。
+if [[ ! "${TM_COLUMN}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+  echo "invalid tmColumn: ${TM_COLUMN} (need Oracle identifier)" >&2
+  exit 1
+fi
 
 if [[ ! -f "${TPL}" ]]; then
   echo "SQL template not found: ${TPL}" >&2
@@ -125,8 +126,9 @@ sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
     -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
     "${TPL}" > "${RUN_SQL}"
 
-# 去掉末尾分号，作为子查询体。
-sed 's/;[[:space:]]*$//' "${RUN_SQL}" > "${INNER_SQL}"
+# 去掉末尾分号与空行，作为子查询体。
+# SQL*Plus 默认空行即结束语句，否则会报 SP2-0042 unknown command ") q"。
+sed -e 's/;[[:space:]]*$//' -e '/^[[:space:]]*$/d' "${RUN_SQL}" > "${INNER_SQL}"
 
 COLUMNS=()
 while IFS= read -r col; do
@@ -172,6 +174,7 @@ SET TRIMOUT ON
 SET TERMOUT OFF
 SET VERIFY OFF
 SET NULL ''
+SET SQLBLANKLINES ON
 WHENEVER SQLERROR EXIT FAILURE
 SPOOL ${OUT_DAT}
 @${EXPORT_SQL}

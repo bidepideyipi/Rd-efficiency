@@ -57,12 +57,19 @@ tables =
 | `onError` | export_batch / load_batch | `stop` / `continue` |
 | `tables` | export_batch；load_batch 无清单时 | **每表一行** `表名 = 时间列`（必填，无全局默认） |
 
-时间列允许值：`TRANDATE`、`TRANTIME`、`WORKDATE`、`SENDTIME`。已移除全局 `tmColumn` 与 `files` / `表名|列名` 写法。
+时间列名为任意 Oracle 标识符（不限集合）。已移除全局 `tmColumn` 与 `files` / `表名|列名` 写法。
 
 ## 2. 批量导出
 
 ```bash
-/opt/mig/scripts/export_batch.sh
+# conf 的 start/end/interval × tables，按月分片
+./export_batch.sh
+
+# 指定日 [D, D+1)，conf 全部表，不再分片
+./export_batch.sh 20240315
+
+# 指定日 + 指定表，不再批量、不再分片
+./export_batch.sh 20240315 "IBPS_HOSTBOOKINIT_HIS = DEALDATE"
 ```
 
 产物示例：

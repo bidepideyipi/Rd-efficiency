@@ -2,11 +2,22 @@
 # 按 export-job.conf 的 tables（表名=时间列）× 时间片，串行调用 export_by_map.sh。
 # 不使用环境变量。时间窗左闭右开：[sliceBegin, sliceEnd)。
 # 每张表必须在 tables 段显式配置时间列，无全局 tmColumn 默认值。
+#
+# 用法：
+#   ./export_batch.sh
+#       conf 的 start/end/interval × tables，按月分片
+#   ./export_batch.sh yyyyMMdd
+#       指定日 [D, D+1) × conf tables，不再分片
+#   ./export_batch.sh yyyyMMdd "tableName = tmColumn"
+#       指定日 + 指定表，不再批量、不再分片
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${SCRIPT_DIR}/export-job.conf"
 ONE_SHOT="${SCRIPT_DIR}/export_by_map.sh"
+
+ONE_DAY="${1:-}"
+ONE_TABLE_SPEC="${2:-}"
 
 if [[ ! -f "${CONF}" ]]; then
   echo "config not found: ${CONF}" >&2
@@ -14,6 +25,15 @@ if [[ ! -f "${CONF}" ]]; then
 fi
 if [[ ! -f "${ONE_SHOT}" ]]; then
   echo "missing ${ONE_SHOT}" >&2
+  exit 1
+fi
+
+if [[ -n "${ONE_TABLE_SPEC}" && -z "${ONE_DAY}" ]]; then
+  echo "usage: $0 [yyyyMMdd [\"tableName = tmColumn\"]]" >&2
+  exit 1
+fi
+if [[ -n "${ONE_DAY}" && ! "${ONE_DAY}" =~ ^[0-9]{8}$ ]]; then
+  echo "invalid date arg: ${ONE_DAY} (need yyyyMMdd)" >&2
   exit 1
 fi
 
@@ -34,10 +54,11 @@ is_global_key() {
 }
 
 check_column() {
-  case "$1" in
-    TRANDATE|TRANTIME|WORKDATE|SENDTIME) ;;
-    *) echo "invalid tmColumn: $1 (TRANDATE|TRANTIME|WORKDATE|SENDTIME)" >&2; exit 1 ;;
-  esac
+  # 不限定列名集合；仅校验可嵌入 s.{{tmColumn}} 的标识符。
+  if [[ ! "$1" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+    echo "invalid tmColumn: $1 (need Oracle identifier)" >&2
+    exit 1
+  fi
 }
 
 SQL_DIR=""
@@ -116,26 +137,8 @@ if [[ -z "${SQL_DIR}" || -z "${OUT_DIR}" ]]; then
   echo "sqlDir and outDir are required (${CONF})" >&2
   exit 1
 fi
-if [[ -z "${START}" || -z "${END}" || -z "${INTERVAL}" ]]; then
-  echo "start, end and interval are required (${CONF})" >&2
-  exit 1
-fi
 if [[ "${ON_ERROR}" != "stop" && "${ON_ERROR}" != "continue" ]]; then
   echo "invalid onError: ${ON_ERROR} (stop|continue)" >&2
-  exit 1
-fi
-if [[ ! "${INTERVAL}" =~ ^([1-9][0-9]*)m$ ]]; then
-  echo "invalid interval: ${INTERVAL} (use Nm, e.g. 1m)" >&2
-  exit 1
-fi
-INTERVAL_N="${BASH_REMATCH[1]}"
-
-if [[ ! "${START}" =~ ^[0-9]{8}$ && ! "${START}" =~ ^[0-9]{14}$ ]]; then
-  echo "invalid start: ${START} (YYYYMMDD or YYYYMMDDHH24MISS)" >&2
-  exit 1
-fi
-if [[ "${#START}" -ne "${#END}" || ! "${END}" =~ ^[0-9]+$ ]]; then
-  echo "start and end must share format YYYYMMDD or YYYYMMDDHH24MISS" >&2
   exit 1
 fi
 
@@ -143,13 +146,22 @@ ts_lt() {
   [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort | head -n 1)" == "$1" ]]
 }
 
-if ! ts_lt "${START}" "${END}"; then
-  echo "start must be earlier than end (${START} >= ${END})" >&2
-  exit 1
-fi
+# 按日推进（单日导出算 end = begin+1）。
+add_days() {
+  local ts="$1"
+  local n="$2"
+  local out
+  if date -d "2024-01-01" +%Y%m%d >/dev/null 2>&1; then
+    local spec="${ts:0:4}-${ts:4:2}-${ts:6:2}"
+    out="$(date -d "${spec} + ${n} day" "+%Y%m%d")"
+  else
+    out="$(date -j -f "%Y%m%d" -v+"${n}d" "${ts}" "+%Y%m%d")"
+  fi
+  printf '%s' "${out}"
+}
 
 # 按自然月推进。start/end 建议落在月初（…01），避免月末日溢出（如 1/31 + 1m）。
-add_interval() {
+add_months() {
   local ts="$1"
   local n="$2"
   local out
@@ -171,7 +183,46 @@ add_interval() {
   printf '%s' "${out}"
 }
 
-if [[ ${#RESOLVED_TABLES[@]} -eq 0 ]]; then
+SINGLE_SLICE=0
+INTERVAL_N=""
+
+if [[ -n "${ONE_DAY}" ]]; then
+  SINGLE_SLICE=1
+  START="${ONE_DAY}"
+  END="$(add_days "${ONE_DAY}" 1)"
+else
+  if [[ -z "${START}" || -z "${END}" || -z "${INTERVAL}" ]]; then
+    echo "start, end and interval are required (${CONF})" >&2
+    exit 1
+  fi
+  if [[ ! "${INTERVAL}" =~ ^([1-9][0-9]*)m$ ]]; then
+    echo "invalid interval: ${INTERVAL} (use Nm, e.g. 1m)" >&2
+    exit 1
+  fi
+  INTERVAL_N="${BASH_REMATCH[1]}"
+  if [[ ! "${START}" =~ ^[0-9]{8}$ && ! "${START}" =~ ^[0-9]{14}$ ]]; then
+    echo "invalid start: ${START} (YYYYMMDD or YYYYMMDDHH24MISS)" >&2
+    exit 1
+  fi
+  if [[ "${#START}" -ne "${#END}" || ! "${END}" =~ ^[0-9]+$ ]]; then
+    echo "start and end must share format YYYYMMDD or YYYYMMDDHH24MISS" >&2
+    exit 1
+  fi
+  if ! ts_lt "${START}" "${END}"; then
+    echo "start must be earlier than end (${START} >= ${END})" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "${ONE_TABLE_SPEC}" ]]; then
+  if [[ "${ONE_TABLE_SPEC}" != *=* ]]; then
+    echo "invalid table spec: ${ONE_TABLE_SPEC} (want: tableName = tmColumn)" >&2
+    exit 1
+  fi
+  RESOLVED_TABLES=()
+  RESOLVED_COLUMNS=()
+  add_table_mapping "${ONE_TABLE_SPEC%%=*}" "${ONE_TABLE_SPEC#*=}"
+elif [[ ${#RESOLVED_TABLES[@]} -eq 0 ]]; then
   echo "tables section is required; each line: 表名 = 时间列" >&2
   exit 1
 fi
@@ -195,16 +246,9 @@ i=0
 while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
   table="${RESOLVED_TABLES[$i]}"
   col="${RESOLVED_COLUMNS[$i]}"
-  cursor="${START}"
-  while ts_lt "${cursor}" "${END}"; do
-    next="$(add_interval "${cursor}" "${INTERVAL_N}")"
-    if [[ "${next}" == "${cursor}" ]]; then
-      echo "interval did not advance from ${cursor}" >&2
-      exit 1
-    fi
-    if ts_lt "${END}" "${next}"; then
-      next="${END}"
-    fi
+  if [[ "${SINGLE_SLICE}" -eq 1 ]]; then
+    cursor="${START}"
+    next="${END}"
     dat="${OUT_DIR}/${table}_${cursor}_${next}.dat"
     ctl="${OUT_DIR}/${table}_${cursor}_${next}.ctl"
     echo "${table} ${cursor} ${next} ${col}"
@@ -218,8 +262,33 @@ while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
         exit 1
       fi
     fi
-    cursor="${next}"
-  done
+  else
+    cursor="${START}"
+    while ts_lt "${cursor}" "${END}"; do
+      next="$(add_months "${cursor}" "${INTERVAL_N}")"
+      if [[ "${next}" == "${cursor}" ]]; then
+        echo "interval did not advance from ${cursor}" >&2
+        exit 1
+      fi
+      if ts_lt "${END}" "${next}"; then
+        next="${END}"
+      fi
+      dat="${OUT_DIR}/${table}_${cursor}_${next}.dat"
+      ctl="${OUT_DIR}/${table}_${cursor}_${next}.ctl"
+      echo "${table} ${cursor} ${next} ${col}"
+      if "${ONE_SHOT}" "${cursor}" "${next}" "${col}" "${table}"; then
+        printf '%s,%s,%s,%s,%s,OK\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
+      else
+        printf '%s,%s,%s,%s,%s,FAIL\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
+        failed=1
+        if [[ "${ON_ERROR}" == "stop" ]]; then
+          echo "stopped after failure, manifest: ${MANIFEST}" >&2
+          exit 1
+        fi
+      fi
+      cursor="${next}"
+    done
+  fi
   i=$((i + 1))
 done
 
