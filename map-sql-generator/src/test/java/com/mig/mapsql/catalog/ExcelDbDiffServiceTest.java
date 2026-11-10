@@ -1,5 +1,6 @@
 package com.mig.mapsql.catalog;
 
+import com.mig.mapsql.core.util.SheetNames;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -7,11 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class ExcelDbDiffServiceTest {
 
     @Test
-    void resolveTableNameStripsTrailingDigit() {
-        assertEquals("IBPS_MOBILEINFO", ExcelDbDiffService.resolveTableName("IBPS_MOBILEINFO1"));
-        assertEquals("IBPS_PAYMENTINIT", ExcelDbDiffService.resolveTableName("IBPS_PAYMENTINIT2"));
-        assertEquals("IBPS_MOBILEINFO", ExcelDbDiffService.resolveTableName("IBPS_MOBILEINFO"));
-        assertEquals("T", ExcelDbDiffService.resolveTableName("T9"));
-        assertEquals("9", ExcelDbDiffService.resolveTableName("9"));
+    void diffUsesSharedSheetNameResolver() {
+        // 对比链路与生成/装载共用 SheetNames.resolveTableName
+        assertEquals("HVPS_EXTPAYMENT", SheetNames.resolveTableName("HVPS_EXTPAYMENT1"));
+        assertEquals("IBPS_MOBILEINFO", SheetNames.resolveTableName("IBPS_MOBILEINFO1"));
     }
 }

@@ -59,6 +59,8 @@ tables =
 
 时间列名为任意 Oracle 标识符（不限集合）。已移除全局 `tmColumn` 与 `files` / `表名|列名` 写法。
 
+多数据来源 Sheet（如 `HVPS_EXTPAYMENT1`）：`tables` 左侧写 **Sheet/sql 文件名**；`.dat`/`.ctl` 文件名同 Sheet；`.ctl` 的 `INTO TABLE` 为物理表名（去末位数字，与生成器 `SheetNames.resolveTableName` / SQL 头 `-- targetTable:` 一致）。
+
 ## 2. 批量导出
 
 ```bash

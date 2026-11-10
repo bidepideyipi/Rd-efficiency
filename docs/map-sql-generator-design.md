@@ -7,7 +7,7 @@
 | 标准文档 | `数据迁移中间表映射关系（跨行支付平台）V0.4.xlsx`（以 Sheet 结构/列定义为准） |
 | 目标 | 读取映射 Excel，生成可被 Shell 参数化执行的 SELECT SQL |
 | 使用方式 | **Web 界面为主**（上传 Excel、配置导出目录）；CLI 为辅 |
-| 产出约定 | **一张目标表对应一个 `.sql` 文件**，文件名 = 目标表名（Sheet 名） |
+| 产出约定 | **一个 Sheet 对应一个 `.sql` 文件**，文件名 = Sheet 名；多源同表时 Sheet 可带末位编号（如 `HVPS_EXTPAYMENT1`），物理表名见 `SheetNames.resolveTableName` / 列 B |
 | 关联支持 | **单源表 WHERE** 与 **主表 + LEFT JOIN 副表**（见 §2A.4 / §2A.5） |
 | 运行时导出 | Linux 跳板机：Shell 替换占位符 + **sqlplus `SPOOL`** → 无表头、`0x01` 定界 `.dat` + **sqlldr `.ctl`** |
 | 运行时装载 | 目标侧 **sqlldr**：`sqlldr ... control={表}_{begin}_{end}.ctl` |
@@ -50,7 +50,7 @@
 | 项 | 约定 |
 |----|------|
 | 标准文件 | `数据迁移中间表映射关系（跨行支付平台）V0.4.xlsx` |
-| 业务 Sheet | 一个目标表一个 Sheet，Sheet 名 = 目标表名（如 `IBPS_PAYMENTINIT`） |
+| 业务 Sheet | 通常 Sheet 名 = 目标表名；多数据来源时可为 `表名`+末位数字（如 `HVPS_EXTPAYMENT1`），物理表名去掉末位数字（与列 B 一致） |
 | 跳过 Sheet | `封面` / `文档说明` / `目录` / `修订记录` 及名称含「说明」者 |
 | 表头行 | 第 3 行（第 1 行标题、第 2 行分组） |
 | 数据行 | 第 4 行起；「序号」为空则跳过 |
@@ -333,7 +333,7 @@ WHERE s.{{tmColumn}} >= '{{beginTm}}'
 
 ```text
 {exportDir}/
-  IBPS_PAYMENTINIT.sql      # 主产物：文件名 = 目标表名 = Sheet 名
+  IBPS_PAYMENTINIT.sql      # 主产物：文件名 = Sheet 名（多源时可为 HVPS_EXTPAYMENT1.sql）
   IBPS_PAYMENTFINAL.sql
   HVPS_PAYMENTINIT.sql
   ...
@@ -346,7 +346,7 @@ WHERE s.{{tmColumn}} >= '{{beginTm}}'
 
 | 项 | 规则 |
 |----|------|
-| 文件名 | `{目标表名}.sql`，与 Sheet 名一致 |
+| 文件名 | `{Sheet名}.sql`；SQL 头 `-- targetTable:` / sqlldr `INTO TABLE` 为物理表名（Sheet 去末位数字） |
 | 一对一 | 禁止多表写进同一文件；禁止一表拆多个 SQL |
 | 覆盖策略 | 默认同名覆盖；Web 可勾选「覆盖已存在文件」 |
 | 非法文件名 | Sheet 名含路径分隔符等 → ERROR，不落盘 |

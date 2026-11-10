@@ -2,6 +2,7 @@ package com.mig.mapsql.catalog;
 
 import com.mig.mapsql.config.GeneratorProperties;
 import com.mig.mapsql.core.model.ExcelColumns;
+import com.mig.mapsql.core.util.SheetNames;
 import com.mig.mapsql.core.util.Strings;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Cell;
@@ -67,7 +68,7 @@ public class ExcelDbDiffService {
                     continue;
                 }
                 // 多数据来源时 Sheet 名可能带编号后缀（如 IBPS_XXX1），末位数字去掉后才是库表名
-                String tableName = resolveTableName(sheetName);
+                String tableName = SheetNames.resolveTableName(sheetName);
                 if (!metadataClient.tableExists(datasourceId, tableName)) {
                     result.setSheetsSkippedNoTable(result.getSheetsSkippedNoTable() + 1);
                     String tip = sheetName.equals(tableName) ? sheetName : sheetName + " → " + tableName;
@@ -257,22 +258,4 @@ public class ExcelDbDiffService {
         return n.contains("说明");
     }
 
-    /**
-     * Sheet 名 → 库表名。末字符为数字时去掉（多数据来源编号，暂不支持两位数）。
-     * 例：IBPS_MOBILEINFO1 → IBPS_MOBILEINFO；IBPS_MOBILEINFO → 原样。
-     */
-    static String resolveTableName(String sheetName) {
-        if (sheetName == null) {
-            return "";
-        }
-        String n = sheetName.trim();
-        if (n.isEmpty()) {
-            return n;
-        }
-        char last = n.charAt(n.length() - 1);
-        if (last >= '0' && last <= '9' && n.length() > 1) {
-            return n.substring(0, n.length() - 1);
-        }
-        return n;
-    }
 }

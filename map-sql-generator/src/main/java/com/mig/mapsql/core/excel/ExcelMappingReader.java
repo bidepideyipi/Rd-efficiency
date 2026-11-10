@@ -6,6 +6,7 @@ import com.mig.mapsql.core.model.LeftJoinSpec;
 import com.mig.mapsql.core.model.MappingType;
 import com.mig.mapsql.core.model.TableMapping;
 import com.mig.mapsql.core.util.JoinConditionParser;
+import com.mig.mapsql.core.util.SheetNames;
 import com.mig.mapsql.core.util.Strings;
 import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Cell;
@@ -102,7 +103,8 @@ public class ExcelMappingReader {
     public TableMapping readSheet(Sheet sheet) {
         TableMapping table = new TableMapping();
         table.setSheetName(sheet.getSheetName());
-        table.setTargetTable(sheet.getSheetName());
+        // 物理表名：优先 Excel 列 B；否则 Sheet 名去末位数字（与对比/装载一致）
+        table.setTargetTable(null);
 
         int headerRowIdx = properties.getHeaderRow() - 1;
         Map<String, String> joinCandidates = new LinkedHashMap<String, String>();
@@ -148,6 +150,10 @@ public class ExcelMappingReader {
             if (Strings.isBlank(table.getTargetTable()) && !Strings.isBlank(field.getTargetTable())) {
                 table.setTargetTable(field.getTargetTable().trim());
             }
+        }
+
+        if (Strings.isBlank(table.getTargetTable())) {
+            table.setTargetTable(SheetNames.resolveTableName(table.getSheetName()));
         }
 
         finalizeRelations(table, new ArrayList<String>(joinCandidates.values()));

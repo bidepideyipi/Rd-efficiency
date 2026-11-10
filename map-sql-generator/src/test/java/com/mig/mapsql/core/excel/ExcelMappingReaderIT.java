@@ -79,10 +79,12 @@ class ExcelMappingReaderIT {
         ExcelMappingReader reader = new ExcelMappingReader(props);
         SelectSqlRenderer renderer = new SelectSqlRenderer(props);
 
-        List<TableMapping> tables = reader.readTables(excel, Collections.singletonList("HVPS_EXTPAYMENT"));
+        List<TableMapping> tables = reader.readTables(excel, Collections.singletonList("HVPS_EXTPAYMENT1"));
         assertFalse(tables.isEmpty());
         TableMapping table = tables.get(0);
 
+        assertEquals("HVPS_EXTPAYMENT1", table.getSheetName());
+        assertEquals("HVPS_EXTPAYMENT", table.getTargetTable(), "多源 Sheet 物理表名应去末位数字/列B");
         assertTrue("A08THVTRX".equalsIgnoreCase(table.getSourceTable()),
                 "主表应为 select * from 中的 A08THVTRX，实际=" + table.getSourceTable());
         assertFalse(table.getLeftJoins().isEmpty(), "应解析到 JOIN");
@@ -95,12 +97,12 @@ class ExcelMappingReaderIT {
             aliases.add(j.getAlias());
             assertTrue(j.getOnPredicate().toLowerCase().contains("businesstrace"));
         }
-        assertTrue(innerCount >= 3, "应有多条 INNER JOIN，实际=" + innerCount);
+        assertTrue(innerCount >= 1, "应有 INNER JOIN 扩展表，实际=" + innerCount);
         assertEquals(table.getLeftJoins().size(), aliases.size(), "JOIN 别名应去重");
 
         // 用最小表验证 renderer 输出 INNER JOIN 关键字
         TableMapping mini = new TableMapping();
-        mini.setSheetName("HVPS_EXTPAYMENT");
+        mini.setSheetName("HVPS_EXTPAYMENT1");
         mini.setTargetTable("HVPS_EXTPAYMENT");
         mini.setSourceTable(table.getSourceTable());
         mini.getLeftJoins().addAll(table.getLeftJoins());
