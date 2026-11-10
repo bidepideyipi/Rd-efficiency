@@ -80,4 +80,5 @@ logs/
 *.tmp
 *.swp
 *~
-map-sql-generator/map-sql-generator.zip
+map-sql-generator/*.zip
+*.zip
