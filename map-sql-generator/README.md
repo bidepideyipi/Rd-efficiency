@@ -4,7 +4,9 @@
 
 1. **Excel → SQL**：将「数据迁移中间表映射关系」Excel 生成 Oracle `SELECT`（一表一 `{表名}.sql`）
 2. **库 ↔ Excel 对比**：OceanBase（Oracle 模式）基表结构 vs 映射 Excel 左侧目标栏位；类型不同标黄改写，库多则追加，Excel 多则标红
-3. **代码扫描 dealcode**：扫描工程目录下 `.fc`，提取 `paramList` 中的 `dealcode` / `dealmsg`，输出 CSV
+3. **数据标准扫描**：按 SQLite 数标规则扫描 OceanBase 基表，生成 ALTER SQL
+4. **库 ↔ 库对比**：左库基线 → 右库 DDL + 数标规则
+5. **错误码标准**：厂商错误码映射银行规范码入库 SQLite，按分类筛选 + 错误码/说明模糊查询
 
 要求：**JDK 8+**（工程按 1.8 编译；Spring Boot 2.7.18）。
 
@@ -93,56 +95,18 @@ mig:
 
 ---
 
-## 工具 4：代码扫描 dealcode
+## 工具 5：错误码标准
 
-扫描指定工程根目录下所有 `.fc` 文件：
-
-- 优先解析 `<Key>paramList</Key>` 后的内层 `<Arg>` 文本
-- 否则用正则配对 `["dealcode","..."]` 与 `["dealmsg","..."]`
-- 相对根目录：**一级目录 = 服务名**，**二级目录 = 模块名**（更深层级忽略）
+将 `docs/厂商错误码映射银行规范错误码表.xlsx`（内置副本 `classpath:errorcode/error-code-standard.xlsx`）导入 SQLite 表 `error_code_standard`（与数标共用 `mig.standard-db-path`）。
 
 ### 页面用法
 
-1. 填写工程根目录（可用仓库内 `example/` 验证）
-2. 检测目录 → 开始扫描
-3. 预览 CSV → 下载 `dealcode-scan.csv`（UTF-8 BOM，便于 Excel）
-
-### CSV 结构
-
-明细区：
-
-```text
-服务名,模块名,dealcode,dealmsg,文件名,行号
-```
-
-空行后为总览（按 dealcode 字母升序）：
-
-```text
-总览
-dealcode,数量
-A00000,1
-A000000,2
-FIBC009,1
-```
-
-样例（根目录为 `example`）：
-
-| 相对路径 | 服务名 | 模块名 |
-|----------|--------|--------|
-| `demo1.fc` | （空） | （空） |
-| `BEPS/BEPSBusiCheckService/scene/.../x.fc` | `BEPS` | `BEPSBusiCheckService` |
+1. 打开「错误码标准」
+2. 按分类（业务类1 / 系统类2 / 结果未知类3）筛选
+3. 「错误码」模糊匹配完整错误码、厂商原码、常量名；「错误说明」模糊匹配银行错误说明
 
 ### API
 
-- `GET /api/scan/dealcode/config` — 默认工程目录
-- `POST /api/scan/dealcode/check-dir` — `{ "path": "..." }`
-- `POST /api/scan/dealcode` — `{ "projectDir": "..." }` → JSON + CSV 预览
-- `POST /api/scan/dealcode/export` — 同上，返回 CSV 附件
-
-### 配置
-
-```yaml
-mig:
-  scan:
-    default-project-dir: ""   # 可选，预填页面工程根目录
-```
+- `GET /api/errorcode/summary` — 合计与分类统计
+- `GET /api/errorcode/categories` — 分类列表
+- `GET /api/errorcode?category=&code=&message=` — 查询

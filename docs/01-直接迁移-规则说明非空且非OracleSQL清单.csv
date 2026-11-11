@@ -1,0 +1,11 @@
+﻿sheet,excel_row,seq,column,mapping_type,reasons,rule
+IBPS_PAYMENTINIT,104,100,BUSICHANNELCODE,01-直接迁移,含中文（非字面量）; 含叙述用语「部分要」; 不像SQL表达式（无CASE/函数/标识符等特征）,部分要用3位英文转换6位数字
+HVPS_PAYMENTINIT,81,78,POSTSCRIPT,01-直接迁移,疑似用+做字符拼接（Oracle应为||）; 不像SQL表达式（无CASE/函数/标识符等特征）,INFO+INFO2
+HVPS_PAYMENTINIT,82,79,REMARK,01-直接迁移,疑似用+做字符拼接（Oracle应为||）; 不像SQL表达式（无CASE/函数/标识符等特征）,NOTE+NOTE2
+HVPS_PAYMENTINIT_HIS,81,78,POSTSCRIPT,01-直接迁移,疑似用+做字符拼接（Oracle应为||）; 不像SQL表达式（无CASE/函数/标识符等特征）,INFO+INFO2
+HVPS_PAYMENTINIT_HIS,82,79,REMARK,01-直接迁移,疑似用+做字符拼接（Oracle应为||）; 不像SQL表达式（无CASE/函数/标识符等特征）,NOTE+NOTE2
+HVPS_HOSTBOOKINIT_HIS,9,6,FEEAMOUNT,01-直接迁移,仅为JOIN片段，不能作为SELECT表达式,left join a08thvtrx_his b on b.businesstrace=a.businesstrace
+HVPS_HOSTBOOKSUCC_HIS,21,18,FEEAMOUNT,01-直接迁移,仅为JOIN片段，不能作为SELECT表达式,left join a08thvtrx_his b on b.businesstrace=a.businesstrace
+HVPS_HOSTBOOKFAIL_HIS,21,18,FEEAMOUNT,01-直接迁移,仅为JOIN片段，不能作为SELECT表达式,left join a08thvtrx_his b on b.businesstrace=a.businesstrace
+BEPS_HOSTBOOKSUCC_HIS,37,34,FEEAMOUNT,01-直接迁移,仅为JOIN片段，不能作为SELECT表达式,left join a08tbetrx_his b on b.businesstrace=a.businesstrace
+CBPS_PAYMENTINIT_HIS,129,126,CANCELACCSERNO,01-直接迁移,仅为JOIN片段，不能作为SELECT表达式,left join A08TWRITEOFFINFO c on c.BUSINESSTRACE=a.BUSINESSTRACE

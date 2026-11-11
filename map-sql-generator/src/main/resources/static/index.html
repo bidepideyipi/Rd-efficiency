@@ -200,6 +200,37 @@
       font-size: 14px;
     }
     .summary strong { color: var(--text); }
+    table.data {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.data th, table.data td {
+      padding: 8px 6px;
+      border-bottom: 1px solid #eef2f6;
+      text-align: left;
+      vertical-align: top;
+    }
+    table.data th {
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+      background: #fff;
+    }
+    table.data code {
+      font-size: 12px;
+      background: #f3f5f7;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .table-wrap {
+      max-height: 520px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
     @media (max-width: 800px) {
       .layout { grid-template-columns: 1fr; }
       nav.side {
@@ -221,7 +252,8 @@
     <button type="button" class="tool active" data-tool="sql">Excel → SQL</button>
     <button type="button" class="tool" data-tool="dbexcel">库 ↔ Excel 对比</button>
     <button type="button" class="tool" data-tool="standard">数据标准扫描</button>
-    <button type="button" class="tool" data-tool="scan">代码扫描 dealcode</button>
+    <button type="button" class="tool" data-tool="dbdb">库 ↔ 库对比</button>
+    <button type="button" class="tool" data-tool="errorcode">错误码标准</button>
   </nav>
   <main>
     <section id="panel-sql" class="panel active">
@@ -369,36 +401,80 @@
       </section>
     </section>
 
-    <section id="panel-scan" class="panel">
-      <h1>代码扫描 <span class="pill">.fc → dealcode CSV</span></h1>
-      <p class="sub">扫描工程目录下的 .fc 文件，提取 paramList 中的 dealcode / dealmsg；相对路径一级为服务名，二级为模块名。</p>
+    <section id="panel-dbdb" class="panel">
+      <h1>库 ↔ 库对比 <span class="pill">左库基准 → 右库 DDL</span></h1>
+      <p class="sub">以左库为基准对齐右库：左有右无表→CREATE；左无右有表→仅提示；字段同理（多余字段 TIP+DROP）。类型差异先套数据标准，无数标则按左库；COMMENT 以左库为准。</p>
 
       <section class="card">
-        <label>工程根目录</label>
+        <label>数据源</label>
         <div class="row">
           <div>
-            <input id="projectDir" type="text" placeholder="运行本服务的机器上的目录，如 D:\GITLAB\IPP"/>
+            <label>左库 A（基准）</label>
+            <select id="dbdbLeft" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+              <option value="">加载中…</option>
+            </select>
           </div>
-          <button class="secondary" type="button" id="btnCheckProject">检测目录</button>
+          <div>
+            <label>右库 B（待改）</label>
+            <select id="dbdbRight" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+              <option value="">加载中…</option>
+            </select>
+          </div>
         </div>
-        <p id="projectStatus" class="sub" style="margin:8px 0 0"></p>
-      </section>
-
-      <section class="card">
-        <div class="toolbar">
-          <button type="button" id="btnScan">开始扫描</button>
-          <button class="secondary" type="button" id="btnDownloadCsv" disabled>下载 CSV</button>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>表名过滤（可选，逗号分隔）</label>
+            <input id="dbdbTables" type="text" placeholder="空=全表；例：IBPS_PAYMENTINIT,HVPS_EXTPAYMENT"/>
+          </div>
         </div>
-        <div class="summary" id="scanSummary"></div>
-        <label>扫描结果（CSV 预览，含总览）</label>
-        <pre id="scanResult">等待操作…</pre>
+        <div class="toolbar" style="margin-top:12px">
+          <button class="secondary" type="button" id="btnDbdbTest">测试左右连接</button>
+          <button type="button" id="btnDbdbScan">对比生成 SQL</button>
+          <button class="secondary" type="button" id="btnDbdbDownload" disabled>下载 .sql</button>
+        </div>
+        <p id="dbdbStatus" class="sub" style="margin:8px 0 0"></p>
+        <div class="summary" id="dbdbSummary" style="margin-top:12px"></div>
+        <label style="margin-top:8px">差异 SQL</label>
+        <pre id="dbdbResult">等待操作…</pre>
       </section>
     </section>
+
+    <section id="panel-errorcode" class="panel">
+      <h1>错误码标准 <span class="pill">厂商码 → 银行规范码</span></h1>
+      <p class="sub">维护「厂商错误码映射银行规范错误码表」于 SQLite。可按分类筛选，并对错误码 / 错误说明做模糊查询。</p>
+
+      <section class="card">
+        <div class="row">
+          <div>
+            <label>分类</label>
+            <select id="ecCategory" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+              <option value="">全部</option>
+            </select>
+          </div>
+          <div>
+            <label>错误码（模糊）</label>
+            <input id="ecCode" type="text" placeholder="完整错误码 / 厂商原码 / 常量名"/>
+          </div>
+          <div>
+            <label>错误说明（模糊）</label>
+            <input id="ecMessage" type="text" placeholder="银行错误说明关键字"/>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnEcSearch">查询</button>
+          <button class="secondary" type="button" id="btnEcReset">重置</button>
+        </div>
+        <div class="summary" id="ecSummary" style="margin-top:12px"></div>
+        <div class="table-wrap" id="ecTableWrap">
+          <em style="color:#5b6775;display:block;padding:12px">加载中…</em>
+        </div>
+      </section>
+    </section>
+
   </main>
 </div>
 <script>
   let uploadId = null;
-  let lastProjectDir = '';
   const $ = (id) => document.getElementById(id);
 
   document.querySelectorAll('nav.side button.tool').forEach((btn) => {
@@ -526,86 +602,6 @@
       lines.push('');
     });
     $('result').textContent = lines.join('\n');
-  };
-
-  async function initScan() {
-    const res = await fetch('/api/scan/dealcode/config');
-    const data = await res.json();
-    if (data.defaultProjectDir) {
-      $('projectDir').value = data.defaultProjectDir;
-    }
-    if (data.status) {
-      renderProjectStatus(data.status);
-    }
-  }
-
-  function renderProjectStatus(status) {
-    if (!status) return;
-    if (status.ok) {
-      $('projectStatus').innerHTML = '<span class="ok">目录可用：</span>' + status.path;
-    } else {
-      $('projectStatus').innerHTML = '<span class="err">不可用：</span>' + (status.error || status.path || '');
-    }
-  }
-
-  $('btnCheckProject').onclick = async () => {
-    const res = await fetch('/api/scan/dealcode/check-dir', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ path: $('projectDir').value })
-    });
-    const data = await res.json();
-    renderProjectStatus(data);
-  };
-
-  $('btnScan').onclick = async () => {
-    lastProjectDir = $('projectDir').value;
-    $('scanResult').textContent = '扫描中…';
-    $('scanSummary').innerHTML = '';
-    $('btnDownloadCsv').disabled = true;
-    const res = await fetch('/api/scan/dealcode', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ projectDir: lastProjectDir })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      $('scanResult').textContent = data.error || JSON.stringify(data, null, 2);
-      return;
-    }
-    $('scanSummary').innerHTML =
-      '<span>文件 <strong>' + data.fileCount + '</strong></span>' +
-      '<span>命中 <strong>' + data.hitCount + '</strong></span>' +
-      '<span>失败文件 <strong>' + data.failedFiles + '</strong></span>';
-    const preview = (data.csvPreview || '').replace(/^\uFEFF/, '');
-    const warnLines = (data.warnings || []).length
-      ? '\n\n--- warnings ---\n' + data.warnings.join('\n')
-      : '';
-    $('scanResult').textContent = preview + warnLines;
-    $('btnDownloadCsv').disabled = false;
-  };
-
-  $('btnDownloadCsv').onclick = async () => {
-    const dir = lastProjectDir || $('projectDir').value;
-    const res = await fetch('/api/scan/dealcode/export', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ projectDir: dir })
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || '下载失败');
-      return;
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dealcode-scan.csv';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   };
 
   async function initDiff() {
@@ -871,11 +867,203 @@
     URL.revokeObjectURL(url);
   };
 
-  Promise.all([initSql(), initScan(), initDiff(), initStandard()]).catch(e => {
-    $('dirStatus').textContent = e.message;
-    $('projectStatus').textContent = e.message;
-    $('dsStatus').textContent = e.message;
-    $('stdDsStatus').textContent = e.message;
+  let lastDbdbSql = '';
+  let lastDbdbReq = null;
+
+  async function initDbdb() {
+    await fillDsSelect('dbdbLeft', 'dbdbStatus');
+    await fillDsSelect('dbdbRight', 'dbdbStatus');
+    const left = $('dbdbLeft');
+    const right = $('dbdbRight');
+    if (left.options.length > 1) {
+      right.selectedIndex = Math.min(1, right.options.length - 1);
+    }
+  }
+
+  function parseTableFilter() {
+    const raw = ($('dbdbTables').value || '').trim();
+    if (!raw) return null;
+    return raw.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  $('btnDbdbTest').onclick = async () => {
+    const left = $('dbdbLeft').value;
+    const right = $('dbdbRight').value;
+    if (!left || !right) {
+      $('dbdbStatus').innerHTML = '<span class="err">请选择左右数据源</span>';
+      return;
+    }
+    if (left === right) {
+      $('dbdbStatus').innerHTML = '<span class="err">左右数据源不能相同</span>';
+      return;
+    }
+    $('dbdbStatus').textContent = '测试中…';
+    for (const id of [left, right]) {
+      const fd = new FormData();
+      fd.append('id', id);
+      const res = await fetch('/api/datasources/test', { method: 'POST', body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        $('dbdbStatus').innerHTML = '<span class="err">' + id + '：' + (data.error || '连接失败') + '</span>';
+        return;
+      }
+    }
+    $('dbdbStatus').innerHTML = '<span class="ok">左右连接成功</span>：' + left + ' → ' + right;
+  };
+
+  $('btnDbdbScan').onclick = async () => {
+    const left = $('dbdbLeft').value;
+    const right = $('dbdbRight').value;
+    if (!left || !right) return;
+    if (left === right) {
+      $('dbdbResult').textContent = '左右数据源不能相同';
+      return;
+    }
+    $('dbdbResult').textContent = '对比中…';
+    $('btnDbdbDownload').disabled = true;
+    const body = {
+      leftDatasourceId: left,
+      rightDatasourceId: right,
+      tables: parseTableFilter()
+    };
+    const res = await fetch('/api/db-db-diff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('dbdbResult').textContent = data.error || '对比失败';
+      return;
+    }
+    lastDbdbSql = data.sqlScript || '';
+    lastDbdbReq = body;
+    $('dbdbSummary').innerHTML =
+      '<span>表=<strong>' + data.tablesCompared + '</strong></span>' +
+      '<span>CREATE=<strong>' + data.createTables + '</strong></span>' +
+      '<span>ADD列=<strong>' + data.addColumns + '</strong></span>' +
+      '<span>DROP提示=<strong>' + data.dropColumnTips + '</strong></span>' +
+      '<span>MODIFY=<strong>' + data.modifyColumns + '</strong></span>' +
+      '<span>COMMENT=<strong>' + data.commentUpdates + '</strong></span>' +
+      '<span>仅B表TIP=<strong>' + data.tipTablesOnlyInB + '</strong></span>';
+    $('dbdbResult').textContent = lastDbdbSql || '（无差异）';
+    $('btnDbdbDownload').disabled = !lastDbdbSql;
+    $('dbdbStatus').innerHTML = '<span class="ok">对比完成</span>';
+  };
+
+  $('btnDbdbDownload').onclick = async () => {
+    if (!lastDbdbReq) return;
+    const res = await fetch('/api/db-db-diff/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lastDbdbReq)
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || '下载失败');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'db-db-diff-' + lastDbdbReq.leftDatasourceId + '-vs-' + lastDbdbReq.rightDatasourceId + '.sql';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  async function initErrorCode() {
+    await loadEcMeta();
+    await searchErrorCodes();
+  }
+
+  async function loadEcMeta() {
+    const res = await fetch('/api/errorcode/summary');
+    const data = await res.json();
+    const sel = $('ecCategory');
+    const current = sel.value;
+    const cats = data.categories || [];
+    sel.innerHTML = '<option value="">全部</option>' +
+      cats.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+    if (current) sel.value = current;
+    const by = data.byCategory || {};
+    const parts = Object.keys(by).map(k => esc(k) + ' <strong>' + by[k] + '</strong>');
+    $('ecSummary').innerHTML =
+      '<span>合计 <strong>' + (data.total || 0) + '</strong></span>' +
+      (parts.length ? '<span>' + parts.join(' · ') + '</span>' : '');
+  }
+
+  async function searchErrorCodes() {
+    const params = new URLSearchParams();
+    const category = $('ecCategory').value;
+    const code = $('ecCode').value.trim();
+    const message = $('ecMessage').value.trim();
+    if (category) params.set('category', category);
+    if (code) params.set('code', code);
+    if (message) params.set('message', message);
+    $('ecTableWrap').innerHTML = '<em style="color:#5b6775;display:block;padding:12px">查询中…</em>';
+    const [sumRes, res] = await Promise.all([
+      fetch('/api/errorcode/summary'),
+      fetch('/api/errorcode?' + params.toString())
+    ]);
+    const sum = await sumRes.json().catch(() => ({}));
+    const data = await res.json().catch(() => ({}));
+    const by = sum.byCategory || {};
+    const parts = Object.keys(by).map(k => esc(k) + ' <strong>' + by[k] + '</strong>');
+    if (!res.ok) {
+      $('ecSummary').innerHTML =
+        '<span>库内合计 <strong>' + (sum.total || 0) + '</strong></span>' +
+        (parts.length ? '<span>' + parts.join(' · ') + '</span>' : '');
+      $('ecTableWrap').innerHTML = '<span class="err">' + esc(data.error || '查询失败') + '</span>';
+      return;
+    }
+    const rows = data.rows || [];
+    $('ecSummary').innerHTML =
+      '<span>库内合计 <strong>' + (sum.total || 0) + '</strong></span>' +
+      (parts.length ? '<span>' + parts.join(' · ') + '</span>' : '') +
+      '<span>本次命中 <strong>' + (data.total || rows.length) + '</strong></span>';
+    if (!rows.length) {
+      $('ecTableWrap').innerHTML = '<em style="color:#5b6775;display:block;padding:12px">无匹配记录</em>';
+      return;
+    }
+    let html = '<table class="data"><thead><tr>' +
+      '<th>分类</th><th>完整错误码</th><th>银行错误说明</th><th>厂商原码</th><th>常量名</th><th>序号</th><th>模块</th>' +
+      '</tr></thead><tbody>';
+    rows.forEach(r => {
+      html += '<tr>' +
+        '<td>' + esc(r.category) + '</td>' +
+        '<td><code>' + esc(r.fullCode) + '</code></td>' +
+        '<td>' + esc(r.message) + '</td>' +
+        '<td><code>' + esc(r.vendorCode) + '</code></td>' +
+        '<td>' + esc(r.vendorConst) + '</td>' +
+        '<td>' + (r.seqNo == null ? '' : r.seqNo) + '</td>' +
+        '<td>' + esc(r.module) + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    $('ecTableWrap').innerHTML = html;
+  }
+
+  $('btnEcSearch').onclick = () => searchErrorCodes();
+  $('ecCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchErrorCodes(); });
+  $('ecMessage').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchErrorCodes(); });
+  $('ecCategory').onchange = () => searchErrorCodes();
+
+  $('btnEcReset').onclick = async () => {
+    $('ecCategory').value = '';
+    $('ecCode').value = '';
+    $('ecMessage').value = '';
+    await searchErrorCodes();
+  };
+
+  Promise.all([initSql(), initDiff(), initStandard(), initDbdb(), initErrorCode()]).catch(e => {
+    if ($('dirStatus')) $('dirStatus').textContent = e.message;
+    if ($('dsStatus')) $('dsStatus').textContent = e.message;
+    if ($('stdDsStatus')) $('stdDsStatus').textContent = e.message;
+    if ($('dbdbStatus')) $('dbdbStatus').textContent = e.message;
+    if ($('ecSummary')) $('ecSummary').textContent = e.message;
   });
 </script>
 </body>

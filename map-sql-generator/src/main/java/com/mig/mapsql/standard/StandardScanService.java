@@ -96,7 +96,15 @@ public class StandardScanService {
         return result;
     }
 
-    private static Match matchRule(DbColumnMeta col, List<StandardRule> rules) {
+    /**
+     * 按启用的数标规则解析列目标类型；无命中返回 null。
+     * COLUMN 优先于 TYPE；同类型按 priority 升序。
+     */
+    public Match resolveStandard(DbColumnMeta col) {
+        return matchRule(col, ruleRepository.listEnabled());
+    }
+
+    static Match matchRule(DbColumnMeta col, List<StandardRule> rules) {
         String colName = col.getColumnName() == null ? "" : col.getColumnName().toUpperCase(Locale.ROOT);
         String current = AlterSqlBuilder.typeDisplay(col);
         ColumnTypeParser.ParsedType parsed = ColumnTypeParser.parse(current);
@@ -128,7 +136,7 @@ public class StandardScanService {
     /**
      * CHAR / CLOB / NUMBER 族之间或向异构类型变更时，不能直接 MODIFY，必须重建。
      */
-    static boolean needsRebuild(String currentType, String targetType) {
+    public static boolean needsRebuild(String currentType, String targetType) {
         ColumnTypeParser.ParsedType src = ColumnTypeParser.parse(currentType);
         ColumnTypeParser.ParsedType tgt = ColumnTypeParser.parse(targetType);
         if (src.family.equals(tgt.family) && "VARCHAR2".equals(src.family)) {
@@ -167,11 +175,11 @@ public class StandardScanService {
         return sb.toString();
     }
 
-    private static final class Match {
-        final StandardRule rule;
-        final String targetType;
+    public static final class Match {
+        public final StandardRule rule;
+        public final String targetType;
 
-        Match(StandardRule rule, String targetType) {
+        public Match(StandardRule rule, String targetType) {
             this.rule = rule;
             this.targetType = targetType;
         }

@@ -22,8 +22,6 @@ mig:
   write-meta: true
   # 数据标准规则库（SQLite）
   standard-db-path: ${user.home}/mig/data-standard.db
-  scan:
-    default-project-dir: ""
   # OceanBase 数据源（库↔Excel 对比 / 数标扫描）。密码勿提交仓库。
   datasources:
     - id: yl1-ibps

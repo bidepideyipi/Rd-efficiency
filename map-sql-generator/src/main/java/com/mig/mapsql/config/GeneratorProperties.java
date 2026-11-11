@@ -21,7 +21,6 @@ public class GeneratorProperties {
     private boolean writeMeta = true;
     /** 数标 SQLite 文件路径 */
     private String standardDbPath = System.getProperty("user.home") + "/mig/data-standard.db";
-    private Scan scan = new Scan();
 
     public String getDefaultExportDir() {
         return defaultExportDir;
@@ -125,25 +124,5 @@ public class GeneratorProperties {
 
     public void setStandardDbPath(String standardDbPath) {
         this.standardDbPath = standardDbPath;
-    }
-
-    public Scan getScan() {
-        return scan;
-    }
-
-    public void setScan(Scan scan) {
-        this.scan = scan == null ? new Scan() : scan;
-    }
-
-    public static class Scan {
-        private String defaultProjectDir = "";
-
-        public String getDefaultProjectDir() {
-            return defaultProjectDir;
-        }
-
-        public void setDefaultProjectDir(String defaultProjectDir) {
-            this.defaultProjectDir = defaultProjectDir;
-        }
     }
 }
