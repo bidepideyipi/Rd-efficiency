@@ -101,6 +101,38 @@ class DbDbDiffServiceTest {
         assertTrue(sql.contains("COMMENT ON COLUMN T_NEW.A IS '甲'"));
     }
 
+    @Test
+    void scriptSkipsZeroDiffTablesAndCommentsSeparators() throws Exception {
+        ObSchemaMetadataClient meta = mock(ObSchemaMetadataClient.class);
+        when(meta.resolveOwner("L")).thenReturn("LO");
+        when(meta.resolveOwner("R")).thenReturn("RO");
+        when(meta.listTables("L")).thenReturn(java.util.Arrays.asList("SAME", "DIFF"));
+        when(meta.listTables("R")).thenReturn(java.util.Arrays.asList("SAME", "DIFF"));
+
+        Map<String, DbColumnMeta> same = new LinkedHashMap<String, DbColumnMeta>();
+        same.put("ID", col("ID", "VARCHAR2", "32", "N", "主键"));
+        Map<String, DbColumnMeta> leftDiff = new LinkedHashMap<String, DbColumnMeta>();
+        leftDiff.put("ID", col("ID", "VARCHAR2", "32", "N", "主键"));
+        leftDiff.put("NAME", col("NAME", "VARCHAR2", "64", "Y", "名称"));
+        Map<String, DbColumnMeta> rightDiff = new LinkedHashMap<String, DbColumnMeta>();
+        rightDiff.put("ID", col("ID", "VARCHAR2", "32", "N", "主键"));
+
+        when(meta.describeColumns("L", "SAME")).thenReturn(same);
+        when(meta.describeColumns("R", "SAME")).thenReturn(same);
+        when(meta.describeColumns("L", "DIFF")).thenReturn(leftDiff);
+        when(meta.describeColumns("R", "DIFF")).thenReturn(rightDiff);
+
+        StandardScanService standard = mock(StandardScanService.class);
+        when(standard.resolveStandard(any(DbColumnMeta.class))).thenReturn(null);
+        DbDbDiffService svc = new DbDbDiffService(meta, standard);
+
+        DbDbDiffService.DiffResult result = svc.compare("L", "R", null);
+        assertFalse(result.sqlScript.contains("SAME"));
+        assertTrue(result.sqlScript.contains("--========== DIFF =========="));
+        assertFalse(result.sqlScript.contains("\n========== "));
+        assertTrue(result.sqlScript.contains("ADD (NAME"));
+    }
+
     private static DbColumnMeta col(String name, String type, String len, String nullable, String comment) {
         DbColumnMeta m = new DbColumnMeta();
         m.setColumnName(name);

@@ -96,10 +96,10 @@ public class DbDbDiffService {
             }
 
             result.tablesCompared++;
-            script.add("========== " + table + " ==========");
 
             if (inA && !inB) {
                 result.createTables++;
+                script.add("--========== " + table + " ==========");
                 script.add("-- existence: A only → CREATE");
                 Map<String, DbColumnMeta> leftCols = metadataClient.describeColumns(leftDs, table);
                 script.addAll(buildCreateTable(table, leftCols));
@@ -109,13 +109,13 @@ public class DbDbDiffService {
 
             if (!inA && inB) {
                 result.tipTablesOnlyInB++;
+                script.add("--========== " + table + " ==========");
                 script.add("-- existence: B only → TIP（左库无此表，不生成 DROP TABLE）");
                 script.add("-- TIP: table " + table + " exists only in B");
                 script.add("");
                 continue;
             }
 
-            script.add("-- existence: BOTH");
             Map<String, DbColumnMeta> leftCols = metadataClient.describeColumns(leftDs, table);
             Map<String, DbColumnMeta> rightCols = metadataClient.describeColumns(rightDs, table);
             TableDiff td = diffColumns(table, leftCols, rightCols);
@@ -123,6 +123,11 @@ public class DbDbDiffService {
             result.dropColumnTips += td.dropCount;
             result.modifyColumns += td.modifyCount;
             result.commentUpdates += td.commentCount;
+            if (td.diffCount == 0) {
+                continue;
+            }
+            script.add("--========== " + table + " ==========");
+            script.add("-- existence: BOTH");
             script.add("-- column diffs(" + td.diffCount + "):");
             script.addAll(td.lines);
             script.add("");
