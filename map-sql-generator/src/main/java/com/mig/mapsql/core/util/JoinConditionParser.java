@@ -193,18 +193,17 @@ public final class JoinConditionParser {
     }
 
     /**
-     * 解析字段应使用的 JOIN 别名：按「JOIN 表 + ON」匹配已解析的 LeftJoinSpec
-     * （兼容同表多关联时 Excel 共用别名、生成器自动改名；
-     *  以及源表写成主表、真实列来自副表 JOIN 的写法）。
+     * 解析字段应使用的 JOIN 别名：仅当字段「源表」明确等于某条 JOIN 表名时才返回副表别名
+     * （兼容同表多关联时 Excel 共用别名、生成器自动改名）。
+     * <p>
+     * 源表为空、或源表是主表、或本行虽粘贴了整段 join SQL 但字段实属主表时，返回 null，
+     * 由调用方回退主表别名——禁止回退到「条件里的第一条 JOIN」，否则 MAINSEQ 会被误标成 b.MAINSEQ。
      */
     public static String resolveJoinAlias(String rawJoinCondition,
                                           String sourceTable,
                                           List<LeftJoinSpec> joins,
                                           String primaryAlias) {
         ClassifiedCondition c = findJoinForTable(rawJoinCondition, sourceTable);
-        if (c == null) {
-            c = firstJoinCondition(rawJoinCondition);
-        }
         if (c == null) {
             return null;
         }
@@ -239,18 +238,6 @@ public final class JoinConditionParser {
                 continue;
             }
             if (want.equals(c.getTableName().trim().toUpperCase(Locale.ROOT))) {
-                return c;
-            }
-        }
-        return null;
-    }
-
-    private static ClassifiedCondition firstJoinCondition(String rawJoinCondition) {
-        if (Strings.isBlank(rawJoinCondition)) {
-            return null;
-        }
-        for (ClassifiedCondition c : extractConditions(rawJoinCondition)) {
-            if (c.getKind() == ConditionKind.LEFT_JOIN || c.getKind() == ConditionKind.INNER_JOIN) {
                 return c;
             }
         }

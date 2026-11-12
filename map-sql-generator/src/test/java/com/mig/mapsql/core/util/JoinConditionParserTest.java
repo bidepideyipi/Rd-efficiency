@@ -132,6 +132,22 @@ class JoinConditionParserTest {
     }
 
     @Test
+    void resolveJoinAliasDoesNotStealPrimaryColumns() {
+        String raw = "select * from a08thvtrx a\n"
+                + "inner join A08TAppdWTSK b on b.syscd='HVPS' and b.businesstrace=a.businesstrace;";
+        JoinConditionParser.RelationParseResult r = JoinConditionParser.parseAll(
+                Arrays.asList(raw), "a");
+
+        // 源表为空 / 主表名：即使本行粘贴了整段 join SQL，也不应落到 b
+        assertEquals(null, JoinConditionParser.resolveJoinAlias(raw, null, r.getLeftJoins(), "a"));
+        assertEquals(null, JoinConditionParser.resolveJoinAlias(raw, "", r.getLeftJoins(), "a"));
+        assertEquals(null, JoinConditionParser.resolveJoinAlias(raw, "a08thvtrx", r.getLeftJoins(), "a"));
+
+        // 源表明确是副表时才用 b
+        assertEquals("b", JoinConditionParser.resolveJoinAlias(raw, "A08TAppdWTSK", r.getLeftJoins(), "a"));
+    }
+
+    @Test
     void extractJoinAliasForTableReadsRowAlias() {
         assertEquals("c2", JoinConditionParser.extractJoinAliasForTable(
                 "left join a08tbankinfo c2 on c2.bkcd=a.RCVBRN", "A08TBANKINFO"));

@@ -11,7 +11,7 @@ mig:
   default-export-dir: ${user.home}/mig/sql/map
   upload-temp-dir: ${java.io.tmpdir}/mapsql-upload
   header-row: 3
-  source-alias: s
+  source-alias: a
   time-predicate: string
   tm-format: YYYYMMDDHH24MISS
   date-format: YYYYMMDDHH24MISS

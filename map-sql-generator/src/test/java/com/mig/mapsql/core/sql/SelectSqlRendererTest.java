@@ -41,7 +41,7 @@ class SelectSqlRendererTest {
 
         String sql = renderer.render(table);
         assertTrue(sql.contains("(s.TRACE) AS AGENTSERIALNO"));
-        assertTrue(sql.contains("case when flag1='0' then '1' else '2' end"));
+        assertTrue(sql.contains("case when s.flag1='0' then '1' else '2' end"));
         assertTrue(sql.contains("CASE WHEN LENGTH(s.FUNCTION2) > 15 THEN SUBSTR(s.FUNCTION2, 1, 15) ELSE s.FUNCTION2 END"));
         assertTrue(sql.contains("(s.FLAG1) AS FLAG"));
         assertTrue(!sql.contains("TO_CHAR(s.FLAG1)"));
@@ -52,6 +52,44 @@ class SelectSqlRendererTest {
         assertTrue(sql.contains("{{endTm}}"));
         assertTrue(sql.contains("{{tmColumn}}"));
         assertTrue(sql.contains("FUNCTION2 IN ('ibps.101.001.01')"));
+    }
+
+    @Test
+    void primaryColumnKeepsMainAliasEvenWhenRowHasJoinSql() {
+        GeneratorProperties props = new GeneratorProperties();
+        props.setSourceAlias("a");
+        SelectSqlRenderer renderer = new SelectSqlRenderer(props);
+
+        TableMapping table = new TableMapping();
+        table.setSheetName("HVPS_EXTPAYMENT");
+        table.setTargetTable("HVPS_EXTPAYMENT");
+        table.setSourceTable("A08THVTRX");
+        table.getTableAliases().put("A08THVTRX", "a");
+        table.getTableAliases().put("A08TAPPDWTSK", "b");
+        table.getLeftJoins().add(new com.mig.mapsql.core.model.LeftJoinSpec(
+                "A08TAppdWTSK", "b", "b.syscd='HVPS' and b.businesstrace=a.businesstrace",
+                null, com.mig.mapsql.core.model.LeftJoinSpec.TYPE_INNER));
+
+        String joinSql = "select * from a08thvtrx a inner join A08TAppdWTSK b "
+                + "on b.syscd='HVPS' and b.businesstrace=a.businesstrace;";
+
+        FieldMapping mainseq = field("AGENTSERIALNO", MappingType.DIRECT, "MAINSEQ",
+                "VARCHAR2", "32", "VARCHAR2", "18", null);
+        mainseq.setSourceTable("A08THVTRX");
+        mainseq.setJoinCondition(joinSql);
+
+        FieldMapping bill = field("BILLDATE", MappingType.DIRECT, "WTSKPAYDATE",
+                "VARCHAR2", "8", "VARCHAR2", "8", null);
+        bill.setSourceTable("A08TAppdWTSK");
+        bill.setJoinCondition(joinSql);
+
+        table.getFields().add(mainseq);
+        table.getFields().add(bill);
+
+        String sql = renderer.render(table);
+        assertTrue(sql.contains("a.MAINSEQ"));
+        assertTrue(!sql.contains("b.MAINSEQ"));
+        assertTrue(sql.contains("(b.WTSKPAYDATE) AS BILLDATE"));
     }
 
     @Test

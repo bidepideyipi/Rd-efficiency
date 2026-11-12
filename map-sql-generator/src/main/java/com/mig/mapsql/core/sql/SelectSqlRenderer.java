@@ -41,7 +41,7 @@ public class SelectSqlRenderer {
             }
             if (properties.isIncludeHeaderComment() && !Strings.isBlank(f.getTargetComment())) {
                 selectParts.add("  -- " + f.getSeq() + " " + f.getTargetComment()
-                        + " [" + Strings.trimToEmpty(f.getMappingTypeRaw()) + "]");
+                        + " " + Strings.trimToEmpty(f.getMappingTypeRaw()));
             }
             selectParts.add("  " + line);
         }
@@ -113,9 +113,13 @@ public class SelectSqlRenderer {
             return null;
         }
 
+        String fieldAlias = resolveFieldAlias(f, table, primaryAlias);
+
         if (!Strings.isBlank(f.getRuleExpression()) && SqlRuleHeuristics.looksLikeSql(f.getRuleExpression())) {
             String expr = SqlRuleHeuristics.normalizeRule(f.getRuleExpression());
             expr = JoinConditionParser.rewritePrimaryAlias(expr, primaryAlias);
+            // 规则里未写别名的列，默认挂到本字段对应表别名（无 JOIN/源表时即主表别名）
+            expr = SqlRuleHeuristics.qualifyUnaliasedColumns(expr, fieldAlias);
             return "(" + expr + ") AS " + targetCol;
         }
 
@@ -127,12 +131,13 @@ public class SelectSqlRenderer {
             throw new IllegalStateException("缺少源列: " + targetCol);
         }
 
-        String alias = JoinConditionParser.resolveJoinAlias(
-                f.getJoinCondition(), f.getSourceTable(), table.getLeftJoins(), primaryAlias);
-        if (Strings.isBlank(alias)) {
-            alias = table.resolveAlias(f.getSourceTable(), primaryAlias);
+        String srcCol = f.getSourceColumn().trim();
+        String base;
+        if (srcCol.indexOf('.') >= 0) {
+            base = JoinConditionParser.rewritePrimaryAlias(srcCol, primaryAlias);
+        } else {
+            base = fieldAlias + "." + srcCol;
         }
-        String base = alias + "." + f.getSourceColumn().trim();
         boolean needCast = TypeCastSupport.typeDiffers(f.getSourceType(), f.getTargetType());
         if (needCast) {
             base = TypeCastSupport.applyTypeCast(base, f.getSourceType(), f.getTargetType(), properties.getDateFormat());
@@ -150,6 +155,15 @@ public class SelectSqlRenderer {
         }
 
         return "(" + base + ") AS " + targetCol;
+    }
+
+    private static String resolveFieldAlias(FieldMapping f, TableMapping table, String primaryAlias) {
+        String alias = JoinConditionParser.resolveJoinAlias(
+                f.getJoinCondition(), f.getSourceTable(), table.getLeftJoins(), primaryAlias);
+        if (Strings.isBlank(alias)) {
+            alias = table.resolveAlias(f.getSourceTable(), primaryAlias);
+        }
+        return alias;
     }
 
     static String literal(String value, String targetType) {
