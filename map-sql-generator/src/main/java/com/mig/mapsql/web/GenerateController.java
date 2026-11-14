@@ -2,6 +2,7 @@ package com.mig.mapsql.web;
 
 import com.mig.mapsql.config.GeneratorProperties;
 import com.mig.mapsql.core.service.GenerateService;
+import com.mig.mapsql.core.service.TestGenerateService;
 import com.mig.mapsql.web.dto.ExportDirRequest;
 import com.mig.mapsql.web.dto.GenerateRequest;
 import org.springframework.core.io.FileSystemResource;
@@ -36,10 +37,14 @@ import java.util.stream.Stream;
 public class GenerateController {
 
     private final GenerateService generateService;
+    private final TestGenerateService testGenerateService;
     private final GeneratorProperties properties;
 
-    public GenerateController(GenerateService generateService, GeneratorProperties properties) {
+    public GenerateController(GenerateService generateService,
+                              TestGenerateService testGenerateService,
+                              GeneratorProperties properties) {
         this.generateService = generateService;
+        this.testGenerateService = testGenerateService;
         this.properties = properties;
     }
 
@@ -104,6 +109,19 @@ public class GenerateController {
             throw new IllegalArgumentException("uploadId 不能为空");
         }
         return generateService.generate(
+                req.getUploadId(),
+                req.getTables(),
+                req.getExportDir(),
+                req.isOverwrite(),
+                req.isStopOnError());
+    }
+
+    @PostMapping("/generate-test")
+    public GenerateService.GenerateReport generateTest(@RequestBody GenerateRequest req) throws IOException {
+        if (req.getUploadId() == null || req.getUploadId().trim().isEmpty()) {
+            throw new IllegalArgumentException("uploadId 不能为空");
+        }
+        return testGenerateService.generate(
                 req.getUploadId(),
                 req.getTables(),
                 req.getExportDir(),

@@ -105,6 +105,10 @@ public class ExcelMappingReader {
         table.setSheetName(sheet.getSheetName());
         // 物理表名：优先 Excel 列 B；否则 Sheet 名去末位数字（与对比/装载一致）
         table.setTargetTable(null);
+        Row titleRow = sheet.getRow(0);
+        if (titleRow != null) {
+            table.setSheetTitle(cell(titleRow, 0));
+        }
 
         int headerRowIdx = properties.getHeaderRow() - 1;
         Map<String, String> joinCandidates = new LinkedHashMap<String, String>();

@@ -52,6 +52,9 @@ class SelectSqlRendererTest {
         assertTrue(sql.contains("{{endTm}}"));
         assertTrue(sql.contains("{{tmColumn}}"));
         assertTrue(sql.contains("FUNCTION2 IN ('ibps.101.001.01')"));
+        // 栏位说明为行尾注释，而非独立 -- 行
+        assertTrue(sql.contains("AS AGENTSERIALNO,  -- 1 AGENTSERIALNO 01-直接迁移"));
+        assertTrue(!sql.matches("(?s).*\\n\\s*-- 1 AGENTSERIALNO.*\\n\\s*\\(s\\.TRACE\\).*"));
     }
 
     @Test

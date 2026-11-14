@@ -8,6 +8,8 @@ import java.util.Map;
 public class TableMapping {
 
     private String sheetName;
+    /** Sheet 第 1 行标题（含「主键：…」时供测试解析） */
+    private String sheetTitle;
     private String targetTable;
     /** 主源表（出现次数最多） */
     private String sourceTable;
@@ -30,6 +32,14 @@ public class TableMapping {
 
     public void setSheetName(String sheetName) {
         this.sheetName = sheetName;
+    }
+
+    public String getSheetTitle() {
+        return sheetTitle;
+    }
+
+    public void setSheetTitle(String sheetTitle) {
+        this.sheetTitle = sheetTitle;
     }
 
     public String getTargetTable() {

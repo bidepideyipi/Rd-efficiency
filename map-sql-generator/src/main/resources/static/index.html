@@ -30,7 +30,7 @@
     }
     .layout {
       display: grid;
-      grid-template-columns: 220px 1fr;
+      grid-template-columns: 248px 1fr;
       min-height: 100vh;
     }
     nav.side {
@@ -249,15 +249,16 @@
 <div class="layout">
   <nav class="side">
     <div class="brand">研发效能工具<small>本地工程效率套件</small></div>
-    <button type="button" class="tool active" data-tool="sql">Excel → SQL</button>
-    <button type="button" class="tool" data-tool="dbexcel">库 ↔ Excel 对比</button>
-    <button type="button" class="tool" data-tool="standard">数据标准扫描</button>
-    <button type="button" class="tool" data-tool="dbdb">库 ↔ 库对比</button>
-    <button type="button" class="tool" data-tool="errorcode">错误码标准</button>
+    <button type="button" class="tool active" data-tool="sql">数据迁移SQL映射</button>
+    <button type="button" class="tool" data-tool="testsql">测试用例SQL映射</button>
+    <button type="button" class="tool" data-tool="dbexcel">目标库与Excel一致比对</button>
+    <button type="button" class="tool" data-tool="standard">落标一致比对</button>
+    <button type="button" class="tool" data-tool="dbdb">多环境数据库一致比对</button>
+    <button type="button" class="tool" data-tool="errorcode">错误码标准参考</button>
   </nav>
   <main>
     <section id="panel-sql" class="panel active">
-      <h1>映射 SQL 生成器 <span class="pill">Excel → 一表一 SQL</span></h1>
+      <h1>数据迁移SQL映射 <span class="pill">一表一 SQL</span></h1>
       <p class="sub">上传映射 Excel，配置导出目录，按目标表生成带时间占位符的 SELECT 文件。</p>
 
       <section class="card">
@@ -300,8 +301,52 @@
       </section>
     </section>
 
+    <section id="panel-testsql" class="panel">
+      <h1>测试用例SQL映射 <span class="pill">源库与目标库对照</span></h1>
+      <p class="sub">同一份映射 Excel，生成 T1 记录数、T2 字段 MD5、T4 金额 SUM（条件触发）、T5 主键校验的成对 SQL；输出到导出目录下的 <code>test/{Sheet}/</code>，由跳板机脚本按时间片比对。</p>
+
+      <section class="card">
+        <label>输出根目录（将写入其下 test/）</label>
+        <div class="row">
+          <div>
+            <input id="testExportDir" type="text" placeholder="/path/to/sql/map"/>
+          </div>
+          <button class="secondary" type="button" id="btnTestCheckDir">检测目录</button>
+        </div>
+        <p id="testDirStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <label>上传映射 Excel（.xlsx）</label>
+        <div class="drop" id="testDrop">
+          <p>拖拽文件到此处，或点击选择</p>
+          <input id="testFile" type="file" accept=".xlsx" style="margin-top:10px"/>
+          <p id="testFileInfo" class="sub" style="margin-top:10px"></p>
+        </div>
+      </section>
+
+      <section class="card">
+        <label>目标表（业务 Sheet）</label>
+        <div class="toolbar">
+          <button class="secondary" type="button" id="btnTestAll">全选</button>
+          <button class="secondary" type="button" id="btnTestNone">清空</button>
+        </div>
+        <div class="sheets" id="testSheets"><em style="color:#5b6775">请先上传 Excel</em></div>
+        <div class="checks">
+          <label class="item"><input type="checkbox" id="testOverwrite" checked/> 覆盖已存在文件</label>
+          <label class="item"><input type="checkbox" id="testStopOnError"/> 遇错即停</label>
+        </div>
+        <button type="button" id="btnGenerateTest" disabled>生成测试 SQL</button>
+      </section>
+
+      <section class="card">
+        <label>生成结果</label>
+        <pre id="testResult">等待操作…</pre>
+      </section>
+    </section>
+
     <section id="panel-dbexcel" class="panel">
-      <h1>库 ↔ Excel 对比 <span class="pill">OB Oracle → 标注回写</span></h1>
+      <h1>目标库与Excel一致比对 <span class="pill">标注回写</span></h1>
       <p class="sub">以 OceanBase（Oracle 模式）基表结构为准，对比映射 Excel 左侧目标栏位：类型不同标黄并改写；库有 Excel 无则追加；Excel 有库无则标红提醒删除。</p>
 
       <section class="card">
@@ -332,8 +377,8 @@
     </section>
 
     <section id="panel-standard" class="panel">
-      <h1>数据标准扫描 <span class="pill">SQLite 规则 → ALTER SQL</span></h1>
-      <p class="sub">按 TYPE（如 CHAR→VARCHAR2、CLOB→VARCHAR2）或 COLUMN 全匹配（如 AMOUNT→NUMBER(22,2)）扫描基表。CHAR / CLOB / NUMBER 不能直接转换时生成四步重建：新增字段 → 复制 COMMENT → 拷贝值 → 删旧改名。</p>
+      <h1>落标一致比对 <span class="pill">ALTER SQL</span></h1>
+      <p class="sub">按 TYPE（如 CHAR 转 VARCHAR2、CLOB 转 VARCHAR2）或 COLUMN 全匹配（如 AMOUNT 转 NUMBER(22,2)）扫描基表。CHAR / CLOB / NUMBER 不能直接转换时生成四步重建：新增字段、复制 COMMENT、拷贝值、删旧改名。</p>
 
       <section class="card">
         <label>数据源</label>
@@ -402,8 +447,8 @@
     </section>
 
     <section id="panel-dbdb" class="panel">
-      <h1>库 ↔ 库对比 <span class="pill">左库基准 → 右库 DDL</span></h1>
-      <p class="sub">以左库为基准对齐右库：左有右无表→CREATE；左无右有表→仅提示；字段同理（多余字段 TIP+DROP）。类型差异先套数据标准，无数标则按左库；COMMENT 以左库为准。</p>
+      <h1>多环境数据库一致比对 <span class="pill">左库基准右库 DDL</span></h1>
+      <p class="sub">以左库为基准对齐右库：左有右无表则 CREATE；左无右有表仅提示；字段同理（多余字段 TIP+DROP）。类型差异先套数据标准，无数标则按左库；COMMENT 以左库为准。</p>
 
       <section class="card">
         <label>数据源</label>
@@ -440,7 +485,7 @@
     </section>
 
     <section id="panel-errorcode" class="panel">
-      <h1>错误码标准 <span class="pill">厂商码 → 银行规范码</span></h1>
+      <h1>错误码标准参考 <span class="pill">厂商码映射银行规范码</span></h1>
       <p class="sub">维护「厂商错误码映射银行规范错误码表」于 SQLite。可按分类筛选，并对错误码 / 错误说明做模糊查询。</p>
 
       <section class="card">
@@ -487,11 +532,15 @@
     });
   });
 
+  let testUploadId = null;
+
   async function initSql() {
     const res = await fetch('/api/config/export-dir');
     const data = await res.json();
     $('exportDir').value = data.defaultExportDir || '';
+    $('testExportDir').value = data.defaultExportDir || '';
     renderDirStatus(data.status);
+    renderTestDirStatus(data.status);
   }
 
   function renderDirStatus(status) {
@@ -503,6 +552,15 @@
     }
   }
 
+  function renderTestDirStatus(status) {
+    if (!status) return;
+    if (status.writable) {
+      $('testDirStatus').innerHTML = '<span class="ok">目录可用：</span>' + status.path + '（产物在其下 test/）';
+    } else {
+      $('testDirStatus').innerHTML = '<span class="err">不可用：</span>' + (status.error || status.path);
+    }
+  }
+
   $('btnCheckDir').onclick = async () => {
     const res = await fetch('/api/config/export-dir', {
       method: 'POST',
@@ -511,6 +569,16 @@
     });
     const data = await res.json();
     renderDirStatus(data);
+  };
+
+  $('btnTestCheckDir').onclick = async () => {
+    const res = await fetch('/api/config/export-dir', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ path: $('testExportDir').value })
+    });
+    const data = await res.json();
+    renderTestDirStatus(data);
   };
 
   const drop = $('drop');
@@ -562,6 +630,90 @@
 
   $('btnAll').onclick = () => document.querySelectorAll('input[name=table]').forEach(c => c.checked = true);
   $('btnNone').onclick = () => document.querySelectorAll('input[name=table]').forEach(c => c.checked = false);
+
+  const testDrop = $('testDrop');
+  testDrop.addEventListener('dragover', (e) => { e.preventDefault(); testDrop.classList.add('drag'); });
+  testDrop.addEventListener('dragleave', () => testDrop.classList.remove('drag'));
+  testDrop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    testDrop.classList.remove('drag');
+    if (e.dataTransfer.files.length) {
+      $('testFile').files = e.dataTransfer.files;
+      uploadTestFile(e.dataTransfer.files[0]);
+    }
+  });
+  $('testFile').addEventListener('click', () => { $('testFile').value = ''; });
+  $('testFile').onchange = () => {
+    if ($('testFile').files[0]) uploadTestFile($('testFile').files[0]);
+  };
+
+  async function uploadTestFile(file) {
+    $('testFileInfo').textContent = '上传中：' + file.name;
+    const fd = new FormData();
+    fd.append('file', file);
+    if (testUploadId) fd.append('previousUploadId', testUploadId);
+    const res = await fetch('/api/excel/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      $('testFileInfo').innerHTML = '<span class="err">' + (data.error || '上传失败') + '</span>';
+      return;
+    }
+    testUploadId = data.uploadId;
+    const tip = data.overwritten ? '已覆盖同名文件' : '已上传';
+    $('testFileInfo').innerHTML = '<span class="ok">' + tip + '</span> ' + data.fileName + '（' + data.sheetCount + ' 张业务表）';
+    renderTestSheets(data.sheets || []);
+    $('btnGenerateTest').disabled = false;
+    $('testFile').value = '';
+  }
+
+  function renderTestSheets(sheets) {
+    const box = $('testSheets');
+    if (!sheets.length) {
+      box.innerHTML = '<em>未识别到业务表</em>';
+      return;
+    }
+    box.innerHTML = sheets.map(s =>
+      '<label class="item"><input type="checkbox" name="testTable" value="' + s + '" checked/> ' + s + '</label>'
+    ).join('');
+  }
+
+  $('btnTestAll').onclick = () => document.querySelectorAll('input[name=testTable]').forEach(c => c.checked = true);
+  $('btnTestNone').onclick = () => document.querySelectorAll('input[name=testTable]').forEach(c => c.checked = false);
+
+  $('btnGenerateTest').onclick = async () => {
+    if (!testUploadId) return;
+    const tables = [...document.querySelectorAll('input[name=testTable]:checked')].map(c => c.value);
+    $('testResult').textContent = '生成中…';
+    const res = await fetch('/api/generate-test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        uploadId: testUploadId,
+        exportDir: $('testExportDir').value,
+        tables,
+        overwrite: $('testOverwrite').checked,
+        stopOnError: $('testStopOnError').checked
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      $('testResult').textContent = data.error || JSON.stringify(data, null, 2);
+      return;
+    }
+    const lines = [];
+    lines.push('测试 SQL 目录: ' + data.exportDir);
+    lines.push('成功: ' + data.succeeded + '  失败: ' + data.failed);
+    lines.push('');
+    (data.tables || []).forEach(t => {
+      lines.push((t.success ? '[OK] ' : '[FAIL] ') + t.table);
+      if (t.outputFile) lines.push('  -> ' + t.outputFile);
+      if (t.error) {
+        String(t.error).split('\n').forEach(line => lines.push('  ' + line));
+      }
+      (t.messages || []).slice(0, 8).forEach(m => lines.push('  ' + m));
+    });
+    $('testResult').textContent = lines.join('\n');
+  };
 
   $('btnGenerate').onclick = async () => {
     if (!uploadId) return;
@@ -908,7 +1060,7 @@
         return;
       }
     }
-    $('dbdbStatus').innerHTML = '<span class="ok">左右连接成功</span>：' + left + ' → ' + right;
+    $('dbdbStatus').innerHTML = '<span class="ok">左右连接成功</span>：' + left + ' 与 ' + right;
   };
 
   $('btnDbdbScan').onclick = async () => {

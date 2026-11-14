@@ -2,11 +2,12 @@
 
 本机研发效能套件（Spring Boot），当前包含：
 
-1. **Excel → SQL**：将「数据迁移中间表映射关系」Excel 生成 Oracle `SELECT`（一表一 `{表名}.sql`）
-2. **库 ↔ Excel 对比**：OceanBase（Oracle 模式）基表结构 vs 映射 Excel 左侧目标栏位；类型不同标黄改写，库多则追加，Excel 多则标红
-3. **数据标准扫描**：按 SQLite 数标规则扫描 OceanBase 基表，生成 ALTER SQL
-4. **库 ↔ 库对比**：左库基线 → 右库 DDL + 数标规则
-5. **错误码标准**：厂商错误码映射银行规范码入库 SQLite，按分类筛选 + 错误码/说明模糊查询
+1. **数据迁移SQL映射**：将「数据迁移中间表映射关系」Excel 生成 Oracle `SELECT`（一表一 `{表名}.sql`）
+2. **测试用例SQL映射**：同一 Excel 生成源/目标对照测试 SQL（记录数、字段 MD5、金额 SUM、主键）；落盘 `{exportDir}/test/{Sheet}/`
+3. **目标库与Excel一致比对**：OceanBase（Oracle 模式）基表结构 vs 映射 Excel 左侧目标栏位；类型不同标黄改写，库多则追加，Excel 多则标红
+4. **落标一致比对**：按 SQLite 数标规则扫描 OceanBase 基表，生成 ALTER SQL
+5. **多环境数据库一致比对**：左库基线对齐右库 DDL + 数标规则
+6. **错误码标准参考**：厂商错误码映射银行规范码入库 SQLite，按分类筛选 + 错误码/说明模糊查询
 
 要求：**JDK 8+**（工程按 1.8 编译；Spring Boot 2.7.18）。
 
@@ -23,7 +24,7 @@ mvn spring-boot:run
 
 ---
 
-## 工具 1：Excel → SQL
+## 工具 1：数据迁移SQL映射
 
 1. 配置 SQL 文件输出目录（默认 `~/mig/sql/map`）
 2. 上传 Excel（`.xlsx`）
@@ -48,10 +49,22 @@ mvn spring-boot:run
 
 ---
 
-## 工具 2：库 ↔ Excel 对比
+## 工具 1b：测试用例SQL映射
+
+1. 配置输出根目录（与 map SQL 相同；产物写入其下 `test/`）
+2. 上传同一份映射 Excel
+3. 勾选目标表，生成测试 SQL
+
+设计见 `docs/excel-to-test-sql-design.md`。跳板机比对：`scripts/test-job.conf` + `test_by_map.sh` / `test_batch.sh`。
+
+API：`POST /api/generate-test`（请求体与 `/api/generate` 相同）
+
+---
+
+## 工具 2：目标库与Excel一致比对
 
 1. 在 `application.yml` 配置 `mig.datasources`，将目标库 `enabled: true`
-2. 打开「库 ↔ Excel 对比」：选择数据源 → 上传 V0.4 映射 Excel → 下载标注结果
+2. 打开「目标库与Excel一致比对」：选择数据源，上传 V0.4 映射 Excel，下载标注结果
 3. 规则（以库为准，对齐 Excel **左侧目标栏位**）：
    - 数据类型/长度不同 → 改写并 **黄色** 标注
    - 库有、Excel 无 → **追加**行（备注 `【DB新增】`）
@@ -62,7 +75,7 @@ API：`GET /api/datasources`、`POST /api/datasources/test`、`POST /api/excel-d
 
 ---
 
-## 工具 3：数据标准扫描
+## 工具 3：落标一致比对
 
 按 SQLite 数标规则扫描 OceanBase（Oracle 模式）基表，生成 ALTER SQL。
 
@@ -95,13 +108,13 @@ mig:
 
 ---
 
-## 工具 5：错误码标准
+## 工具 5：错误码标准参考
 
 将 `docs/厂商错误码映射银行规范错误码表.xlsx`（内置副本 `classpath:errorcode/error-code-standard.xlsx`）导入 SQLite 表 `error_code_standard`（与数标共用 `mig.standard-db-path`）。
 
 ### 页面用法
 
-1. 打开「错误码标准」
+1. 打开「错误码标准参考」
 2. 按分类（业务类1 / 系统类2 / 结果未知类3）筛选
 3. 「错误码」模糊匹配完整错误码、厂商原码、常量名；「错误说明」模糊匹配银行错误说明
 

@@ -9,9 +9,12 @@
 | `export_batch.sh` | 表清单 × 按自然月切分，逐次导出 |
 | `load_by_map.sh` | 单表单窗装载：对已有 `.ctl` 执行 sqlldr |
 | `load_batch.sh` | 批量装载：优先按导出清单 OK 行执行 |
+| `test-job.conf` | 测试 SQL 目录、源/目标连接、表清单、时间片 |
+| `test_by_map.sh` | 单表单窗：执行成对测试 SQL → 比对 → `verify.result` |
+| `test_batch.sh` | 表清单 × 时间片，逐次调用 `test_by_map.sh` |
 
 ```bash
-chmod +x export_by_map.sh export_batch.sh load_by_map.sh load_batch.sh
+chmod +x export_by_map.sh export_batch.sh load_by_map.sh load_batch.sh test_by_map.sh test_batch.sh
 which sqlplus
 which sqlldr
 ```
@@ -117,7 +120,26 @@ tables =
 装载清单：`{outDir}/_batch/load-manifest.txt`  
 行格式：`表名,片开始,片结束,ctl路径,OK|FAIL`。
 
-## 6. 占位符与文件约定
+## 6. 迁移结果测试（Excel → 测试 SQL）
+
+先在 Web「Excel → 测试 SQL」生成 `{testSqlDir}/{Sheet}/01_count_*`、`02_hash_*`、`05_pk_*`，再在跳板机执行：
+
+```bash
+# 编辑 test-job.conf：testSqlDir / testOutDir / connect / tgtConnect / tables
+./test_batch.sh
+./test_batch.sh 20240315
+./test_batch.sh 20240315 "IBPS_PAYMENTINIT = TRANDATE"
+```
+
+单表单窗：
+
+```bash
+./test_by_map.sh <beginTm> <endTm> <tmColumn> <Sheet名>
+```
+
+每片产出 `{testOutDir}/{Sheet}_{begin}_{end}/verify.result`（overall=PASS|FAIL）与可选 `verify.diff`。设计见 `docs/excel-to-test-sql-design.md` §6.5。
+
+## 7. 占位符与文件约定
 
 | 占位符 | 替换成 |
 |--------|--------|
@@ -131,8 +153,9 @@ tables =
 | `.ctl` | `FIELDS TERMINATED BY X'01'`，列序 = map SQL 的 `) AS 列名` |
 | 装载 | `load_*.sh` → `sqlldr` |
 
-## 7. 失败时看哪里
+## 8. 失败时看哪里
 
 - 导出失败：`export-manifest` 中 `FAIL`；sqlplus / `NLS_LANG`。
 - 装载失败：`load-manifest` 中 `FAIL`；同前缀 `.log` / `.bad`。
+- 测试失败：对应片目录 `verify.result` / `verify.diff`；`batch_summary.tsv`。
 - `onError = stop` 时停在失败片；`continue` 时继续，进程最终仍非 0。

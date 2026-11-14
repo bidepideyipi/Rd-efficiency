@@ -31,6 +31,7 @@ public class SelectSqlRenderer {
         }
 
         List<String> selectParts = new ArrayList<String>();
+        List<String> trailingComments = new ArrayList<String>();
         for (FieldMapping f : table.getFields()) {
             if (f.getMappingType() == MappingType.SKIP) {
                 continue;
@@ -39,31 +40,12 @@ public class SelectSqlRenderer {
             if (line == null) {
                 continue;
             }
-            if (properties.isIncludeHeaderComment() && !Strings.isBlank(f.getTargetComment())) {
-                selectParts.add("  -- " + f.getSeq() + " " + f.getTargetComment()
-                        + " " + Strings.trimToEmpty(f.getMappingTypeRaw()));
-            }
-            selectParts.add("  " + line);
+            selectParts.add(line);
+            // 行尾注释：避免独立 -- 行在 PL/SQL Developer 编码错位时吞掉下一行表达式
+            trailingComments.add(trailingComment(f));
         }
         if (selectParts.isEmpty()) {
             throw new IllegalStateException("无有效 SELECT 列: " + target);
-        }
-
-        List<String> formatted = new ArrayList<String>();
-        List<Integer> exprIndexes = new ArrayList<Integer>();
-        for (int i = 0; i < selectParts.size(); i++) {
-            if (!selectParts.get(i).trim().startsWith("--")) {
-                exprIndexes.add(i);
-            }
-        }
-        for (int i = 0; i < selectParts.size(); i++) {
-            String part = selectParts.get(i);
-            if (part.trim().startsWith("--")) {
-                formatted.add(part);
-            } else {
-                boolean last = exprIndexes.get(exprIndexes.size() - 1) == i;
-                formatted.add(last ? part : part + ",");
-            }
         }
 
         StringBuilder sb = new StringBuilder();
@@ -76,38 +58,113 @@ public class SelectSqlRenderer {
         }
         sb.append("-- DO NOT EDIT manually unless necessary\n\n");
         sb.append("SELECT\n");
-        for (String line : formatted) {
-            sb.append(line).append("\n");
+        for (int i = 0; i < selectParts.size(); i++) {
+            boolean last = i == selectParts.size() - 1;
+            sb.append("  ").append(selectParts.get(i));
+            if (!last) {
+                sb.append(",");
+            }
+            String cmt = trailingComments.get(i);
+            if (cmt != null) {
+                sb.append("  ").append(cmt);
+            }
+            sb.append("\n");
         }
+        sb.append(renderFromWhere(table, primaryAlias));
+        sb.append(";\n");
+        return sb.toString();
+    }
+
+    /** 是否具备业务 WHERE（从而会拼时间窗）。测试 SQL 与 map SQL 共用此判定。 */
+    public boolean hasTimeWindow(TableMapping table) {
+        return !Strings.isBlank(table.getJoinPredicate());
+    }
+
+    /**
+     * 渲染源侧 FROM + JOIN + WHERE（含时间窗与业务谓词）。
+     * 无业务 WHERE 时返回空 WHERE（与 map SQL 一致，不拼时间窗）。
+     */
+    public String renderFromWhere(TableMapping table, String primaryAlias) {
+        String source = table.getSourceTable();
+        StringBuilder sb = new StringBuilder();
         sb.append("FROM ").append(source).append(" ").append(primaryAlias).append("\n");
         for (LeftJoinSpec lj : table.getLeftJoins()) {
             sb.append(lj.sqlKeyword()).append(" ").append(lj.getTableName()).append(" ").append(lj.getAlias())
                     .append(" ON ").append(lj.getOnPredicate()).append("\n");
         }
         sb.append(renderWhere(table, primaryAlias));
-        sb.append(";\n");
         return sb.toString();
     }
 
-    private String renderWhere(TableMapping table, String alias) {
+    public String renderWhere(TableMapping table, String alias) {
         // 无业务 WHERE（如仅写 select * from T）时不拼时间分片，也不生成 AND (select * from …)
         if (Strings.isBlank(table.getJoinPredicate())) {
             return "";
         }
         StringBuilder where = new StringBuilder("WHERE ");
-        if ("to_date".equalsIgnoreCase(properties.getTimePredicate())) {
-            where.append(alias).append(".{{tmColumn}} >= TO_DATE('{{beginTm}}', '{{tmFormat}}')\n");
-            where.append("  AND ").append(alias).append(".{{tmColumn}} <  TO_DATE('{{endTm}}', '{{tmFormat}}')");
-        } else {
-            where.append(alias).append(".{{tmColumn}} >= '{{beginTm}}'\n");
-            where.append("  AND ").append(alias).append(".{{tmColumn}} <  '{{endTm}}'");
-        }
+        where.append(renderTimePredicate(alias));
         where.append("\n  AND (\n    ").append(table.getJoinPredicate()).append("\n  )");
         where.append("\n");
         return where.toString();
     }
 
+    /** 仅时间窗谓词（不含 WHERE 关键字与业务 AND），供目标侧测试 SQL 使用。 */
+    public String renderTimePredicate(String alias) {
+        if ("to_date".equalsIgnoreCase(properties.getTimePredicate())) {
+            return alias + ".{{tmColumn}} >= TO_DATE('{{beginTm}}', '{{tmFormat}}')\n"
+                    + "  AND " + alias + ".{{tmColumn}} <  TO_DATE('{{endTm}}', '{{tmFormat}}')";
+        }
+        return alias + ".{{tmColumn}} >= '{{beginTm}}'\n"
+                + "  AND " + alias + ".{{tmColumn}} <  '{{endTm}}'";
+    }
+
+    /**
+     * 栏位行尾注释；关闭 includeHeaderComment 或无简述时返回 null。
+     * 换行压成空格，避免 -- 注释被拆行。
+     */
+    String trailingComment(FieldMapping f) {
+        if (!properties.isIncludeHeaderComment()) {
+            return null;
+        }
+        String comment = Strings.trimToEmpty(f.getTargetComment());
+        String mapType = Strings.trimToEmpty(f.getMappingTypeRaw());
+        String seq = Strings.trimToEmpty(f.getSeq());
+        if (comment.isEmpty() && mapType.isEmpty() && seq.isEmpty()) {
+            return null;
+        }
+        StringBuilder c = new StringBuilder("--");
+        if (!seq.isEmpty()) {
+            c.append(' ').append(sanitizeCommentPart(seq));
+        }
+        if (!comment.isEmpty()) {
+            c.append(' ').append(sanitizeCommentPart(comment));
+        }
+        if (!mapType.isEmpty()) {
+            c.append(' ').append(sanitizeCommentPart(mapType));
+        }
+        return c.toString();
+    }
+
+    private static String sanitizeCommentPart(String s) {
+        return s.replace('\r', ' ').replace('\n', ' ').replaceAll(" +", " ").trim();
+    }
+
     String renderField(FieldMapping f, TableMapping table, String primaryAlias) {
+        String targetCol = f.getTargetColumn();
+        if (Strings.isBlank(targetCol)) {
+            return null;
+        }
+        String expr = renderFieldExpression(f, table, primaryAlias);
+        if (expr == null) {
+            return null;
+        }
+        return "(" + expr + ") AS " + targetCol;
+    }
+
+    /**
+     * 字段表达式（不含外层括号与 AS 别名），供测试 SQL 指纹/SUM 与 map SELECT 同源复用。
+     */
+    public String renderFieldExpression(FieldMapping f, TableMapping table, String primaryAlias) {
         String targetCol = f.getTargetColumn();
         if (Strings.isBlank(targetCol)) {
             return null;
@@ -120,11 +177,11 @@ public class SelectSqlRenderer {
             expr = JoinConditionParser.rewritePrimaryAlias(expr, primaryAlias);
             // 规则里未写别名的列，默认挂到本字段对应表别名（无 JOIN/源表时即主表别名）
             expr = SqlRuleHeuristics.qualifyUnaliasedColumns(expr, fieldAlias);
-            return "(" + expr + ") AS " + targetCol;
+            return expr;
         }
 
         if (f.getMappingType() == MappingType.DEFAULT_VALUE) {
-            return "(" + literal(f.getDefaultValue(), f.getTargetType()) + ") AS " + targetCol;
+            return literal(f.getDefaultValue(), f.getTargetType());
         }
 
         if (Strings.isBlank(f.getSourceColumn())) {
@@ -154,7 +211,7 @@ public class SelectSqlRenderer {
                     + " ELSE " + base + " END";
         }
 
-        return "(" + base + ") AS " + targetCol;
+        return base;
     }
 
     private static String resolveFieldAlias(FieldMapping f, TableMapping table, String primaryAlias) {
