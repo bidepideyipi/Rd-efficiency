@@ -31,6 +31,8 @@ public class SelectSqlRenderer {
         }
 
         List<String> selectParts = new ArrayList<String>();
+        List<String> exportColumns = new ArrayList<String>();
+        List<String> exportNumberColumns = new ArrayList<String>();
         List<String> trailingComments = new ArrayList<String>();
         for (FieldMapping f : table.getFields()) {
             if (f.getMappingType() == MappingType.SKIP) {
@@ -41,6 +43,10 @@ public class SelectSqlRenderer {
                 continue;
             }
             selectParts.add(line);
+            exportColumns.add(f.getTargetColumn().trim());
+            if (TypeCastSupport.isNumberType(f.getTargetType())) {
+                exportNumberColumns.add(f.getTargetColumn().trim());
+            }
             // 行尾注释：避免独立 -- 行在 PL/SQL Developer 编码错位时吞掉下一行表达式
             trailingComments.add(trailingComment(f));
         }
@@ -56,6 +62,24 @@ public class SelectSqlRenderer {
         if (!table.getLeftJoins().isEmpty()) {
             sb.append("-- joins: ").append(table.getLeftJoins().size()).append("\n");
         }
+        // 供导出脚本校验实际 SELECT 列序，并在旧式 SQL 无法解析时回退
+        sb.append("-- exportColumns: ");
+        for (int i = 0; i < exportColumns.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(exportColumns.get(i));
+        }
+        sb.append("\n");
+        // 导出脚本仅对目标 NUMBER 字段使用确定性的数字文本格式。
+        sb.append("-- exportNumberColumns: ");
+        for (int i = 0; i < exportNumberColumns.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(exportNumberColumns.get(i));
+        }
+        sb.append("\n");
         sb.append("-- DO NOT EDIT manually unless necessary\n\n");
         sb.append("SELECT\n");
         for (int i = 0; i < selectParts.size(); i++) {

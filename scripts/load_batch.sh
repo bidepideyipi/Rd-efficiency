@@ -4,6 +4,16 @@
 # 不使用环境变量。
 set -euo pipefail
 
+LOAD_BATCH_STARTED="${SECONDS}"
+print_load_batch_elapsed() {
+  local rc=$?
+  local elapsed=$((SECONDS - LOAD_BATCH_STARTED))
+  printf 'load batch total elapsed: %02d:%02d:%02d (%d seconds)\n' \
+    "$((elapsed / 3600))" "$(((elapsed % 3600) / 60))" "$((elapsed % 60))" "${elapsed}"
+  return "${rc}"
+}
+trap print_load_batch_elapsed EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${SCRIPT_DIR}/export-job.conf"
 ONE_SHOT="${SCRIPT_DIR}/load_by_map.sh"
@@ -135,7 +145,9 @@ add_interval() {
 mkdir -p "${OUT_DIR}/_batch"
 EXPORT_MANIFEST="${OUT_DIR}/_batch/export-manifest.txt"
 LOAD_MANIFEST="${OUT_DIR}/_batch/load-manifest.txt"
+ERROR_LOG="${OUT_DIR}/_batch/load-error.log"
 : > "${LOAD_MANIFEST}"
+: > "${ERROR_LOG}"
 
 JOBS=() # 每项：table|begin|end
 
@@ -216,14 +228,50 @@ for job in "${JOBS[@]}"; do
   begin="${rest%%|*}"
   end="${rest##*|}"
   ctl="${OUT_DIR}/${table}_${begin}_${end}.ctl"
+  slice_log="${OUT_DIR}/${table}_${begin}_${end}.log"
+  slice_bad="${OUT_DIR}/${table}_${begin}_${end}.bad"
   echo "${table} ${begin} ${end}"
-  if "${ONE_SHOT}" "${begin}" "${end}" "${table}"; then
+  tmp="$(mktemp)"
+  set +e
+  "${ONE_SHOT}" "${begin}" "${end}" "${table}" >"${tmp}" 2>&1
+  rc=$?
+  set -e
+  cat "${tmp}"
+  if [[ "${rc}" -eq 0 ]]; then
+    rm -f "${tmp}"
     printf '%s,%s,%s,%s,OK\n' "${table}" "${begin}" "${end}" "${ctl}" >> "${LOAD_MANIFEST}"
   else
     printf '%s,%s,%s,%s,FAIL\n' "${table}" "${begin}" "${end}" "${ctl}" >> "${LOAD_MANIFEST}"
+    {
+      echo "==== $(date '+%Y-%m-%d %H:%M:%S') FAIL table=${table} begin=${begin} end=${end} ctl=${ctl} rc=${rc} ===="
+      if [[ -s "${tmp}" ]]; then
+        echo "-- load_by_map output --"
+        cat "${tmp}"
+      else
+        echo "-- load_by_map output: (empty) --"
+      fi
+      if [[ -f "${slice_log}" ]]; then
+        echo "-- sqlldr log: ${slice_log} --"
+        log_err="$(grep -E 'ORA-[0-9]{5}|SP2-[0-9]{4}|SQL\*Loader-|Error |ERROR |rejected|Rejected|not loaded|CRITICAL' "${slice_log}" 2>/dev/null | head -n 80 || true)"
+        if [[ -n "${log_err}" ]]; then
+          printf '%s\n' "${log_err}"
+        fi
+        echo "---- sqlldr log tail ----"
+        tail -n 80 "${slice_log}" 2>/dev/null || true
+      else
+        echo "-- sqlldr log missing: ${slice_log} --"
+      fi
+      if [[ -f "${slice_bad}" ]]; then
+        echo "-- bad file (first 20 lines): ${slice_bad} --"
+        head -n 20 "${slice_bad}" 2>/dev/null || true
+      fi
+      echo
+    } >> "${ERROR_LOG}"
+    rm -f "${tmp}"
     failed=1
     if [[ "${ON_ERROR}" == "stop" ]]; then
       echo "stopped after failure, manifest: ${LOAD_MANIFEST}" >&2
+      echo "error log: ${ERROR_LOG}" >&2
       exit 1
     fi
   fi
@@ -231,5 +279,6 @@ done
 
 echo "manifest: ${LOAD_MANIFEST}"
 if [[ "${failed}" -ne 0 ]]; then
+  echo "error log: ${ERROR_LOG}" >&2
   exit 1
 fi

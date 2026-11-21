@@ -9,7 +9,7 @@
 | 使用方式 | **Web 界面为主**（上传 Excel、配置导出目录）；CLI 为辅 |
 | 产出约定 | **一个 Sheet 对应一个 `.sql` 文件**，文件名 = Sheet 名；多源同表时 Sheet 可带末位编号（如 `HVPS_EXTPAYMENT1`），物理表名见 `SheetNames.resolveTableName` / 列 B |
 | 关联支持 | **单源表 WHERE** 与 **主表 + LEFT JOIN 副表**（见 §2A.4 / §2A.5） |
-| 运行时导出 | Linux 跳板机：Shell 替换占位符 + **sqlplus `SPOOL`** → 无表头、`0x01` 定界 `.dat` + **sqlldr `.ctl`** |
+| 运行时导出 | Linux 跳板机：Shell 替换占位符 + **sqlplus `SPOOL`** → 无表头、`0x01` 字段定界、`X'1E1F1E0A'` 记录定界 `.dat` + **sqlldr `.ctl`** |
 | 运行时装载 | 目标侧 **sqlldr**：`sqlldr ... control={表}_{begin}_{end}.ctl` |
 | 非目标 | 不负责 `expdp`/搬数；不建中间表/视图；不直接连库导数据；**不导出 JSON / CSV** |
 
@@ -33,7 +33,7 @@
 生成后的 SQL 仍由跳板机 Shell：
 
 1. 替换 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
-2. **sqlplus**（源库）：`SPOOL` → 无表头、字段分隔符 `CHR(1)`（`0x01`）的 `.dat`
+2. **sqlplus**（源库）：`SPOOL` → 无表头、字段分隔符 `CHR(1)`（`0x01`）、自定义记录结束符 `X'1E1F1E0A'` 的 `.dat`
 3. 按同一映射列序生成 **sqlldr 控制文件** `.ctl`
 4. 目标侧 **sqlldr** 装载：`sqlldr user/pass@TGT control=….ctl`
 
@@ -692,7 +692,7 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 
 跳板机需已安装 **sqlplus**（导出）与 **sqlldr**（装载），均在 `PATH` 中。产物为：
 
-- **无表头**、字段分隔符 **`CHR(1)`（`0x01`）** 的 `.dat`
+- **无表头**、字段分隔符 **`CHR(1)`（`0x01`）**、记录结束符 **`X'1E1F1E0A'`** 的 `.dat`
 - 同序的 sqlldr 控制文件 `.ctl`
 
 **不生成** `.csv` / `.json` / `_load.sql`。选用 `0x01` 而非 `|`：源文本可能含 `|`，定界符冲突会导致错列。
@@ -705,7 +705,7 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 | `outDir` | `.dat` / `.ctl` 输出目录 |
 | `connect` | 源库 sqlplus 连接串 `user/password@SERVICE` |
 | `tgtConnect` | 目标库 sqlldr 连接串（`load_by_map.sh`） |
-| `ctlCharset` | 可选，默认 `AL32UTF8`；写入 `.ctl` 的 `CHARACTERSET` |
+| `ctlCharset` | 可选，默认 `ZHS16GBK`（GBK）；须与 `.dat` 实际编码一致，写入 `.ctl` 的 `CHARACTERSET` |
 | `loadMode` | 可选，默认 `APPEND`；`APPEND` / `TRUNCATE` / `REPLACE` / `INSERT` |
 | `sqlldrErrors` / `sqlldrRows` / `sqlldrDirect` | 可选；传给 sqlldr |
 
@@ -720,8 +720,12 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 `export_by_map.sh` 行为：
 
 1. 替换占位符；从 map SQL 提取 `) AS 列名` 作为列序  
-2. 包成子查询，用 `NVL(TO_CHAR(q.列), '') || CHR(1) || ...` 拼单列后 `SPOOL` → `.dat`  
-3. 按同一列序生成 `.ctl`（`INFILE` 指向该 `.dat`，`FIELDS TERMINATED BY X'01'`）
+2. 直接改写顶层表达式，以 `CHR(1)` 拼字段，行末追加 `CHR(30)||CHR(31)||CHR(30)` 后 `SPOOL` → `.dat`
+3. 按同一列序生成 `.ctl`（`STR X'1E1F1E0A'`，`FIELDS TERMINATED BY X'01'`）
+
+生成器在 SQL 头写出 `-- exportNumberColumns:`。列出的目标 NUMBER 字段导出时使用
+`TO_CHAR(expr, 'TM9', 'NLS_NUMERIC_CHARACTERS=''.,''')`，并补齐小于 1 数值的小数点前导零，
+保证 `0.01` 而非 `.01`，同时不强制补尾随零。缺少该头的旧 map SQL 必须重新生成。
 
 导出会话：无表头、`PAGESIZE 0`、`LINESIZE` 足够大、`TRIMSPOOL ON`。须避免折行截断。
 
@@ -744,13 +748,16 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 ```
 
 `export-job.conf` 装载相关键：`tgtConnect`（必填）、`sqlldrErrors` / `sqlldrRows` / `sqlldrDirect`（可选）。
+`sqlldrErrors=-1` 为脚本级“处理到 EOF”：按 `.dat` 物理记录数设置 SQL*Loader
+`ERRORS`。仅当全部拒绝记录均为 `ORA-00001` 时按幂等重复成功；其他拒绝、discard
+或全字段为空仍失败。SQL*Loader 本身不接收 `ERRORS=-1`。
 
 `.ctl` 要点（列序 = map SQL 的 `AS` 顺序，与表 DDL 物理顺序无关）：
 
 ```text
 LOAD DATA
-CHARACTERSET AL32UTF8
-INFILE '/opt/mig/out/IBPS_PAYMENTINIT_20240101_20240102.dat'
+CHARACTERSET ZHS16GBK
+INFILE '/opt/mig/out/IBPS_PAYMENTINIT_20240101_20240102.dat' "STR X'1E1F1E0A'"
 BADFILE '...bad'
 APPEND INTO TABLE IBPS_PAYMENTINIT
 FIELDS TERMINATED BY X'01'
@@ -801,7 +808,7 @@ TRAILING NULLCOLS
 1. 三个占位符名称固定，大小写敏感：`{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`。  
 2. `{表名}.sql` 以单条 `SELECT ... ;` 为主（可有注释）；SELECT 列表顺序 = Excel 非 `00` 映射行序 = `.dat` 字段序 = `.ctl` 列序。  
 3. Shell 侧对 `{{tmColumn}}` 做标识符格式校验后再替换（不限定列名集合）。  
-4. 运行时：**sqlplus** 导出无表头 **`0x01` `.dat`**；**sqlldr** 按同序 **`.ctl`** 装载。  
+4. 运行时：**sqlplus** 导出无表头、`0x01` 字段分隔、`X'1E1F1E0A'` 记录分隔的 `.dat`；**sqlldr** 按同序 `.ctl` 装载。
 5. 跳板机统一 `NLS_LANG` / `.ctl` `CHARACTERSET`，避免中文乱码。  
 6. 分隔符不用 `|`（源数据可能含 `|`）。
 
@@ -886,7 +893,7 @@ scripts/
 4. **字符集**：`.dat` / `.ctl` `CHARACTERSET` 与 Oracle / sqlplus / sqlldr 字符集需运维统一，生成器只保证 UTF-8 源 SQL。  
 5. **不生成中间表**：任何「落库再导」需求不在本工程范围。  
 6. **依赖 sqlplus + sqlldr**：源导出用 sqlplus；目标装载用 sqlldr（Instant Client Tools 等）。  
-7. **定界与折行**：字段内若出现 `0x01` 或嵌入换行会错列；`LINESIZE` / `TRIMSPOOL` 配置不当会导致截断，须在试点表验证。  
+7. **定界与折行**：字段内 CR/LF 由自定义记录结束符保留；字段内 `0x01` 或完整保留序列 `X'1E1F1E0A'` 仍会破坏定界，须在试点表验证。
 8. **超长字段**：`.ctl` 默认 `CHAR(4000)`；若单字段可能更长，需按表调大或改 `CHAR`/`VARCHARC`。
 
 ---

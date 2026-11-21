@@ -1,5 +1,6 @@
 #!/bin/bash
-# 单表单窗：替换占位符 → sqlplus SPOOL 无表头 0x01 .dat → 生成 sqlldr 控制文件 .ctl。
+# 单表单窗：替换占位符 → sqlplus SPOOL 无表头、0x01 字段分隔、
+# X'1E1F1E0A' 记录分隔的 .dat → 生成 sqlldr 控制文件 .ctl。
 # 只读同目录 export-job.conf，不使用环境变量。
 set -euo pipefail
 
@@ -69,19 +70,28 @@ conf_get_optional() {
   fi
 }
 
-# 从 map SQL 提取 ") AS COL" 目标列名，顺序即 SELECT / .dat / .ctl 列序。
-extract_columns() {
+# 读取生成器写入的 "-- exportColumns: A,B,C"，用于校验实际 SELECT 或解析失败时回退。
+read_export_columns_header() {
   local sql_file="$1"
   awk '
-    /^[[:space:]]*--/ { next }
-    {
-      line = $0
-      while (match(line, /\) AS [A-Za-z_][A-Za-z0-9_]*/)) {
-        token = substr(line, RSTART, RLENGTH)
-        sub(/^\) AS /, "", token)
-        print token
-        line = substr(line, RSTART + RLENGTH)
-      }
+    /^--[[:space:]]*exportColumns:/ {
+      sub(/^--[[:space:]]*exportColumns:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' "${sql_file}"
+}
+
+# 读取目标 NUMBER 字段列表；这些字段导出时使用固定小数点和显式 TO_CHAR 格式。
+read_export_number_columns_header() {
+  local sql_file="$1"
+  awk '
+    /^--[[:space:]]*exportNumberColumns:/ {
+      sub(/^--[[:space:]]*exportNumberColumns:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      print
+      exit
     }
   ' "${sql_file}"
 }
@@ -120,8 +130,8 @@ extract_target_table() {
 SQL_DIR="$(conf_get sqlDir)"
 OUT_DIR="$(conf_get outDir)"
 CONNECT="$(conf_get connect)"
-# sqlldr 控制文件字符集；按目标库常用 AL32UTF8，可在 conf 覆盖。
-CTL_CHARSET="$(conf_get_optional ctlCharset AL32UTF8)"
+# sqlldr 数据文件字符集；本项目跳板机导出为 GBK，对应 Oracle 名称 ZHS16GBK。
+CTL_CHARSET="$(conf_get_optional ctlCharset ZHS16GBK)"
 # APPEND | TRUNCATE | REPLACE | INSERT（sqlldr 装载方式）
 LOAD_MODE="$(conf_get_optional loadMode APPEND)"
 
@@ -132,9 +142,12 @@ esac
 
 # TABLE_NAME = Sheet/sql 文件名（可含末位编号）；物理装载表名见 TARGET_TABLE。
 TPL="${SQL_DIR}/${TABLE_NAME}.sql"
+EXPORT_RENDERER="${SCRIPT_DIR}/render_export_sql.awk"
 RUN_SQL="/tmp/${TABLE_NAME}_run.sql"
 EXPORT_SQL="/tmp/${TABLE_NAME}_export.sql"
 INNER_SQL="/tmp/${TABLE_NAME}_inner.sql"
+EXPORT_COLUMNS_FILE="$(mktemp "/tmp/${TABLE_NAME}_export_columns.XXXXXX")"
+trap 'rm -f "${EXPORT_COLUMNS_FILE}"' EXIT
 # 产物文件名保留 Sheet 名，避免 HVPS_EXTPAYMENT1/2 等同物理表互相覆盖。
 OUT_DAT="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.dat"
 OUT_CTL="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.ctl"
@@ -149,6 +162,10 @@ fi
 
 if [[ ! -f "${TPL}" ]]; then
   echo "SQL template not found: ${TPL}" >&2
+  exit 1
+fi
+if [[ ! -f "${EXPORT_RENDERER}" ]]; then
+  echo "export SQL renderer not found: ${EXPORT_RENDERER}" >&2
   exit 1
 fi
 
@@ -166,46 +183,100 @@ sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
     "${TPL}" > "${RUN_SQL}"
 
 # 去掉末尾分号与空行，作为子查询体。
-# SQL*Plus 默认空行即结束语句，否则会报 SP2-0042 unknown command ") q"。
+# SQL*Plus 默认空行即结束语句。
 sed -e 's/;[[:space:]]*$//' -e '/^[[:space:]]*$/d' "${RUN_SQL}" > "${INNER_SQL}"
+
+if ! grep -Eq '^--[[:space:]]*exportNumberColumns:' "${TPL}"; then
+  echo "missing -- exportNumberColumns header in ${TPL}; regenerate map SQL with the current generator" >&2
+  exit 1
+fi
+
+NUMBER_COLUMNS=()
+EXPORT_NUM_COLS_HDR="$(read_export_number_columns_header "${TPL}")"
+if [[ -n "${EXPORT_NUM_COLS_HDR}" ]]; then
+  IFS=',' read -r -a _num_col_arr <<< "${EXPORT_NUM_COLS_HDR}"
+  for col in "${_num_col_arr[@]}"; do
+    col="$(printf '%s' "${col}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [[ ! "${col}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+      echo "invalid exportNumberColumns entry in ${TPL}: ${col}" >&2
+      exit 1
+    fi
+    NUMBER_COLUMNS+=("${col}")
+  done
+fi
+NUMBER_COLUMNS_CSV="$(IFS=','; printf '%s' "${NUMBER_COLUMNS[*]}")"
+
+# 直接改写原 SELECT 的顶层表达式，不增加外层查询，也不预声明列数。
+: > "${EXPORT_COLUMNS_FILE}"
+if ! awk -v columns_file="${EXPORT_COLUMNS_FILE}" \
+    -v number_columns_csv="${NUMBER_COLUMNS_CSV}" \
+    -f "${EXPORT_RENDERER}" "${INNER_SQL}" > "${EXPORT_SQL}"; then
+  echo "failed to render direct export SQL from ${TPL}" >&2
+  echo "innerSql: ${INNER_SQL}" >&2
+  exit 1
+fi
+
+HEADER_COLUMNS=()
+EXPORT_COLS_HDR="$(read_export_columns_header "${TPL}")"
+if [[ -n "${EXPORT_COLS_HDR}" ]]; then
+  IFS=',' read -r -a _col_arr <<< "${EXPORT_COLS_HDR}"
+  for col in "${_col_arr[@]}"; do
+    col="$(printf '%s' "${col}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -n "${col}" ]] && HEADER_COLUMNS+=("${col}")
+  done
+fi
 
 COLUMNS=()
 while IFS= read -r col; do
   [[ -n "${col}" ]] && COLUMNS+=("${col}")
-done < <(extract_columns "${RUN_SQL}")
+done < "${EXPORT_COLUMNS_FILE}"
 
 if [[ ${#COLUMNS[@]} -eq 0 ]]; then
-  echo "no AS columns found in ${TPL}" >&2
+  echo "no top-level AS columns found in ${TPL}" >&2
   exit 1
 fi
 
-# 拼成单列：NVL(TO_CHAR(q.COL), '') || CHR(1) || ...，避免 NULL 传导与 COLSEP 垫空格。
-CONCAT_EXPR=""
-i=0
-for col in "${COLUMNS[@]}"; do
-  piece="NVL(TO_CHAR(q.${col}), '')"
-  if [[ "${i}" -eq 0 ]]; then
-    CONCAT_EXPR="${piece}"
-  else
-    CONCAT_EXPR="${CONCAT_EXPR} || CHR(1) || ${piece}"
+if [[ ${#HEADER_COLUMNS[@]} -gt 0
+      && "${HEADER_COLUMNS[*]}" != "${COLUMNS[*]}" ]]; then
+  echo "warning: exportColumns header does not match actual SELECT aliases in ${TPL}; using SELECT aliases" >&2
+  echo "  header (${#HEADER_COLUMNS[@]}): ${HEADER_COLUMNS[*]}" >&2
+  echo "  select (${#COLUMNS[@]}): ${COLUMNS[*]}" >&2
+fi
+
+for number_col in "${NUMBER_COLUMNS[@]}"; do
+  number_col_found=0
+  for col in "${COLUMNS[@]}"; do
+    if [[ "${number_col}" == "${col}" ]]; then
+      number_col_found=1
+      break
+    fi
+  done
+  if [[ "${number_col_found}" -ne 1 ]]; then
+    echo "exportNumberColumns entry is not an actual SELECT alias in ${TPL}: ${number_col}" >&2
+    exit 1
   fi
-  i=$((i + 1))
 done
 
-{
-  echo "SELECT ${CONCAT_EXPR}"
-  echo "FROM ("
-  cat "${INNER_SQL}"
-  echo ") q"
-  echo ";"
-} > "${EXPORT_SQL}"
+for col in "${COLUMNS[@]}"; do
+  if [[ ! "${col}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+    echo "invalid export column in ${TPL}: ${col} (need Oracle identifier)" >&2
+    exit 1
+  fi
+done
 
-sqlplus -s "${CONNECT}" <<EOF
+# TERMOUT OFF：正常行只进 SPOOL（.dat）；ORA/SP2 也进 .dat，终端常为空。
+# 把 sqlplus stdout+stderr 落到 .log；失败时再从 .dat 抽出 ORA/SP2。
+# 先清掉旧 .dat，避免上次失败残留的 ORA 文本误导本次报错。
+: > "${OUT_LOG}"
+rm -f "${OUT_DAT}"
+set +e
+sqlplus -s "${CONNECT}" <<EOF >>"${OUT_LOG}" 2>&1
 SET ECHO OFF
 SET FEEDBACK OFF
 SET HEADING OFF
 SET PAGESIZE 0
 SET LINESIZE 32767
+SET RECSEP OFF
 SET LONG 1000000
 SET LONGCHUNKSIZE 1000000
 SET TRIMSPOOL ON
@@ -220,6 +291,44 @@ SPOOL ${OUT_DAT}
 SPOOL OFF
 EXIT
 EOF
+SQLPLUS_RC=$?
+set -e
+
+if [[ "${SQLPLUS_RC}" -ne 0 ]]; then
+  # 先读出 sqlplus 捕获内容，再写 .log，避免 tee 截断同一文件导致内容丢失
+  SQLPLUS_CAPTURE=""
+  if [[ -s "${OUT_LOG}" ]]; then
+    SQLPLUS_CAPTURE="$(cat "${OUT_LOG}")"
+  fi
+  SPOOL_ERR=""
+  if [[ -f "${OUT_DAT}" ]]; then
+    # 不锚行首：SPOOL 里 ORA 前可能有空格/回车
+    SPOOL_ERR="$(grep -E 'ORA-[0-9]{5}|SP2-[0-9]{4}|ERROR at line' "${OUT_DAT}" 2>/dev/null | head -n 50 || true)"
+  fi
+  {
+    echo "sqlplus export failed: ${TABLE_NAME} ${BEGIN_TM} ${END_TM} rc=${SQLPLUS_RC}"
+    echo "exportSql: ${EXPORT_SQL}"
+    echo "spool: ${OUT_DAT}"
+    echo "extracted columns (${#COLUMNS[@]}): ${COLUMNS[*]}"
+    echo "export mode: direct SELECT rewrite (no outer query)"
+    if [[ -n "${SQLPLUS_CAPTURE}" ]]; then
+      echo "---- sqlplus stdout/stderr ----"
+      printf '%s\n' "${SQLPLUS_CAPTURE}"
+    else
+      echo "---- sqlplus stdout/stderr: (empty) ----"
+    fi
+    if [[ -n "${SPOOL_ERR}" ]]; then
+      echo "---- sqlplus errors from spool ----"
+      printf '%s\n' "${SPOOL_ERR}"
+    elif [[ -f "${OUT_DAT}" ]]; then
+      echo "---- spool file tail (no ORA/SP2 matched) ----"
+      tail -n 80 "${OUT_DAT}" 2>/dev/null || true
+    else
+      echo "spool file missing: ${OUT_DAT}"
+    fi
+  } | tee "${OUT_LOG}" >&2
+  exit "${SQLPLUS_RC}"
+fi
 
 # 生成 sqlldr 控制文件：列序 = 映射 AS 序；空串按 NULL。
 # INTO TABLE 用物理表名（Sheet 去末位数字 / SQL 头 targetTable），与对比逻辑一致。
@@ -229,7 +338,9 @@ EOF
   echo "-- targetTable: ${TARGET_TABLE}"
   echo "LOAD DATA"
   echo "CHARACTERSET ${CTL_CHARSET}"
-  echo "INFILE '${OUT_DAT}'"
+  # 每条 SELECT 输出末尾为 1E 1F 1E，SQL*Plus 再补 LF，组成逻辑记录结束符。
+  # 这样字段值中的普通 CR/LF 会保留为字段内容，不会拆成新记录。
+  echo "INFILE '${OUT_DAT}' \"STR X'1E1F1E0A'\""
   echo "BADFILE '${OUT_BAD}'"
   echo "DISCARDFILE '${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.dsc'"
   echo "${LOAD_MODE} INTO TABLE ${TARGET_TABLE}"

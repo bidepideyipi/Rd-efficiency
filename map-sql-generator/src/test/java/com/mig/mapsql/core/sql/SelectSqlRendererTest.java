@@ -55,6 +55,8 @@ class SelectSqlRendererTest {
         // 栏位说明为行尾注释，而非独立 -- 行
         assertTrue(sql.contains("AS AGENTSERIALNO,  -- 1 AGENTSERIALNO 01-直接迁移"));
         assertTrue(!sql.matches("(?s).*\\n\\s*-- 1 AGENTSERIALNO.*\\n\\s*\\(s\\.TRACE\\).*"));
+        assertTrue(sql.contains("-- exportColumns: AGENTSERIALNO,MBFLAG,MSGTYPE,FLAG,AMOUNT,CLEARBRNO"));
+        assertTrue(sql.contains("-- exportNumberColumns: AMOUNT"));
     }
 
     @Test
@@ -116,6 +118,7 @@ class SelectSqlRendererTest {
         assertTrue(!sql.contains("{{tmColumn}}"));
         assertTrue(!sql.contains("{{beginTm}}"));
         assertTrue(!sql.toLowerCase().contains("select * from"));
+        assertTrue(sql.contains("-- exportNumberColumns: "));
     }
 
     private static FieldMapping field(String tgt, MappingType type, String src,

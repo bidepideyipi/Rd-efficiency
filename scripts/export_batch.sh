@@ -12,6 +12,16 @@
 #       指定日 + 指定表，不再批量、不再分片
 set -euo pipefail
 
+EXPORT_BATCH_STARTED="${SECONDS}"
+print_export_batch_elapsed() {
+  local rc=$?
+  local elapsed=$((SECONDS - EXPORT_BATCH_STARTED))
+  printf 'export batch total elapsed: %02d:%02d:%02d (%d seconds)\n' \
+    "$((elapsed / 3600))" "$(((elapsed % 3600) / 60))" "$((elapsed % 60))" "${elapsed}"
+  return "${rc}"
+}
+trap print_export_batch_elapsed EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${SCRIPT_DIR}/export-job.conf"
 ONE_SHOT="${SCRIPT_DIR}/export_by_map.sh"
@@ -239,7 +249,69 @@ done
 
 mkdir -p "${OUT_DIR}/_batch"
 MANIFEST="${OUT_DIR}/_batch/export-manifest.txt"
+ERROR_LOG="${OUT_DIR}/_batch/export-error.log"
 : > "${MANIFEST}"
+: > "${ERROR_LOG}"
+
+# 执行单片导出：成功/失败写 manifest；失败时追加错误日志（含 ORA/SP2 原因）。
+run_export_slice() {
+  local table="$1"
+  local begin="$2"
+  local end="$3"
+  local col="$4"
+  local dat ctl slice_log tmp rc spool_err
+  dat="${OUT_DIR}/${table}_${begin}_${end}.dat"
+  ctl="${OUT_DIR}/${table}_${begin}_${end}.ctl"
+  slice_log="${OUT_DIR}/${table}_${begin}_${end}.log"
+  echo "${table} ${begin} ${end} ${col}"
+  tmp="$(mktemp)"
+  set +e
+  "${ONE_SHOT}" "${begin}" "${end}" "${col}" "${table}" >"${tmp}" 2>&1
+  rc=$?
+  set -e
+  cat "${tmp}"
+  if [[ "${rc}" -eq 0 ]]; then
+    rm -f "${tmp}"
+    printf '%s,%s,%s,%s,%s,OK\n' "${table}" "${begin}" "${end}" "${dat}" "${ctl}" >> "${MANIFEST}"
+    return 0
+  fi
+  printf '%s,%s,%s,%s,%s,FAIL\n' "${table}" "${begin}" "${end}" "${dat}" "${ctl}" >> "${MANIFEST}"
+  {
+    echo "==== $(date '+%Y-%m-%d %H:%M:%S') FAIL table=${table} begin=${begin} end=${end} tmColumn=${col} rc=${rc} ===="
+    if [[ -s "${tmp}" ]]; then
+      echo "-- export_by_map output --"
+      cat "${tmp}"
+    else
+      echo "-- export_by_map output: (empty) --"
+    fi
+    # 再从单片 .log / spool .dat 抽原因（旧版 by_map 或 TERMOUT OFF 时 stdout 为空）
+    if [[ -f "${slice_log}" && -s "${slice_log}" ]]; then
+      echo "-- slice log: ${slice_log} --"
+      cat "${slice_log}"
+    fi
+    if [[ -f "${dat}" ]]; then
+      spool_err="$(grep -E 'ORA-[0-9]{5}|SP2-[0-9]{4}|ERROR at line' "${dat}" 2>/dev/null | head -n 50 || true)"
+      if [[ -n "${spool_err}" ]]; then
+        echo "-- spool/dat Oracle errors: ${dat} --"
+        printf '%s\n' "${spool_err}"
+      elif [[ ! -s "${tmp}" ]]; then
+        echo "-- spool/dat tail (no ORA/SP2 matched): ${dat} --"
+        tail -n 80 "${dat}" 2>/dev/null || true
+      fi
+    else
+      echo "-- spool/dat missing: ${dat} --"
+    fi
+    echo
+  } >> "${ERROR_LOG}"
+  rm -f "${tmp}"
+  failed=1
+  if [[ "${ON_ERROR}" == "stop" ]]; then
+    echo "stopped after failure, manifest: ${MANIFEST}" >&2
+    echo "error log: ${ERROR_LOG}" >&2
+    exit 1
+  fi
+  return 0
+}
 
 failed=0
 i=0
@@ -247,21 +319,7 @@ while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
   table="${RESOLVED_TABLES[$i]}"
   col="${RESOLVED_COLUMNS[$i]}"
   if [[ "${SINGLE_SLICE}" -eq 1 ]]; then
-    cursor="${START}"
-    next="${END}"
-    dat="${OUT_DIR}/${table}_${cursor}_${next}.dat"
-    ctl="${OUT_DIR}/${table}_${cursor}_${next}.ctl"
-    echo "${table} ${cursor} ${next} ${col}"
-    if "${ONE_SHOT}" "${cursor}" "${next}" "${col}" "${table}"; then
-      printf '%s,%s,%s,%s,%s,OK\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
-    else
-      printf '%s,%s,%s,%s,%s,FAIL\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
-      failed=1
-      if [[ "${ON_ERROR}" == "stop" ]]; then
-        echo "stopped after failure, manifest: ${MANIFEST}" >&2
-        exit 1
-      fi
-    fi
+    run_export_slice "${table}" "${START}" "${END}" "${col}"
   else
     cursor="${START}"
     while ts_lt "${cursor}" "${END}"; do
@@ -273,19 +331,7 @@ while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
       if ts_lt "${END}" "${next}"; then
         next="${END}"
       fi
-      dat="${OUT_DIR}/${table}_${cursor}_${next}.dat"
-      ctl="${OUT_DIR}/${table}_${cursor}_${next}.ctl"
-      echo "${table} ${cursor} ${next} ${col}"
-      if "${ONE_SHOT}" "${cursor}" "${next}" "${col}" "${table}"; then
-        printf '%s,%s,%s,%s,%s,OK\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
-      else
-        printf '%s,%s,%s,%s,%s,FAIL\n' "${table}" "${cursor}" "${next}" "${dat}" "${ctl}" >> "${MANIFEST}"
-        failed=1
-        if [[ "${ON_ERROR}" == "stop" ]]; then
-          echo "stopped after failure, manifest: ${MANIFEST}" >&2
-          exit 1
-        fi
-      fi
+      run_export_slice "${table}" "${cursor}" "${next}" "${col}"
       cursor="${next}"
     done
   fi
@@ -294,5 +340,6 @@ done
 
 echo "manifest: ${MANIFEST}"
 if [[ "${failed}" -ne 0 ]]; then
+  echo "error log: ${ERROR_LOG}" >&2
   exit 1
 fi

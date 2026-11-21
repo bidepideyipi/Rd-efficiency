@@ -6,9 +6,12 @@
 |------|------|
 | `export-job.conf` | 路径、源/目标连接、表清单、时间范围、sqlldr 参数 |
 | `export_by_map.sh` | 单表单窗导出 → `.dat` + `.ctl` |
+| `render_export_sql.awk` | 将 map SELECT 直接改写为 `0x01` 分隔导出 SQL |
 | `export_batch.sh` | 表清单 × 按自然月切分，逐次导出 |
 | `load_by_map.sh` | 单表单窗装载：对已有 `.ctl` 执行 sqlldr |
 | `load_batch.sh` | 批量装载：优先按导出清单 OK 行执行 |
+| `test_export_wrapper.sh` | 不连接数据库，回归验证导出 SQL 不增加外层查询 |
+| `test_load_by_map.sh` | 使用假 sqlldr 回归验证 `-1` 与错误分类 |
 | `test-job.conf` | 测试 SQL 目录、源/目标连接、表清单、时间片 |
 | `test_by_map.sh` | 单表单窗：执行成对测试 SQL → 比对 → `verify.result` |
 | `test_batch.sh` | 表清单 × 时间片，逐次调用 `test_by_map.sh` |
@@ -28,9 +31,9 @@ sqlDir = /opt/mig/sql/map
 outDir = /opt/mig/out
 connect = user/password@SOURCE
 tgtConnect = user/password@TGT_SERVICE
-ctlCharset = AL32UTF8
+ctlCharset = ZHS16GBK
 loadMode = APPEND
-sqlldrErrors = 100
+sqlldrErrors = -1
 sqlldrRows = 5000
 sqlldrDirect = false
 
@@ -50,9 +53,9 @@ tables =
 | `outDir` | 全部 | `.dat` / `.ctl` / 日志目录 |
 | `connect` | `export_by_map.sh` | 源库 sqlplus 连接串 |
 | `tgtConnect` | `load_by_map.sh` | 目标库 sqlldr 连接串 |
-| `ctlCharset` | `export_by_map.sh` | 可选，默认 `AL32UTF8` |
+| `ctlCharset` | `export_by_map.sh` | `.dat` 的实际字符集，写入 `.ctl`；默认 `ZHS16GBK`（GBK） |
 | `loadMode` | `export_by_map.sh` | 写入 `.ctl`：`APPEND` / `TRUNCATE` / `REPLACE` / `INSERT` |
-| `sqlldrErrors` | `load_by_map.sh` | 可选，默认 `100` |
+| `sqlldrErrors` | `load_by_map.sh` | 可选，默认 `-1`：按 `.dat` 记录数处理到 EOF；非负整数则使用 SQL*Loader 原生错误上限 |
 | `sqlldrRows` | `load_by_map.sh` | 可选，默认 `5000` |
 | `sqlldrDirect` | `load_by_map.sh` | 可选，默认 `false` |
 | `start` / `end` | export_batch；load_batch 无清单时 | 左闭右开 |
@@ -83,9 +86,12 @@ tables =
 {表名}_20240301_20240401.dat
 {表名}_20240301_20240401.ctl
 {outDir}/_batch/export-manifest.txt
+{outDir}/_batch/export-error.log   # 仅失败片有内容
 ```
 
 清单行：`表名,片开始,片结束,dat路径,ctl路径,OK|FAIL`。
+失败片的 sqlplus / 脚本输出追加到 `export-error.log`。
+脚本退出时会输出整体耗时，例如：`export batch total elapsed: 01:23:45 (5025 seconds)`。
 
 ## 3. 单表单窗导出
 
@@ -108,6 +114,11 @@ tables =
 
 需已存在同前缀的 `.dat` 与 `.ctl`。日志 / 坏数据：同前缀 `.log` / `.bad`。
 
+`sqlldrErrors=-1` 是脚本语义，不会把 `-1` 直接传给 SQL*Loader。脚本按 `.dat` 的
+物理记录数设置 `errors`，确保处理到 EOF。若拒绝记录全部且仅由 `ORA-00001`
+主键/唯一键冲突造成，则按幂等重复返回成功；`ORA-01400`、`ORA-12899`、格式错误、
+discard 或全字段为空等情况仍返回失败。该模式不会回滚已经成功装载的记录。
+
 ## 5. 批量装载
 
 ```bash
@@ -119,6 +130,8 @@ tables =
 
 装载清单：`{outDir}/_batch/load-manifest.txt`  
 行格式：`表名,片开始,片结束,ctl路径,OK|FAIL`。
+失败片的 sqlldr / 脚本输出追加到 `{outDir}/_batch/load-error.log`。
+脚本退出时会输出整体耗时，例如：`load batch total elapsed: 00:18:06 (1086 seconds)`。
 
 ## 6. 迁移结果测试（Excel → 测试 SQL）
 
@@ -149,13 +162,25 @@ tables =
 
 | 项 | 约定 |
 |----|------|
-| `.dat` | 无表头，分隔符 `0x01` |
-| `.ctl` | `FIELDS TERMINATED BY X'01'`，列序 = map SQL 的 `) AS 列名` |
+| `.dat` | 无表头；字段分隔符 `0x01`；记录结束符 `0x1E 0x1F 0x1E 0x0A` |
+| `.ctl` | `STR X'1E1F1E0A'` + `FIELDS TERMINATED BY X'01'`，列序 = map SQL 的 `) AS 列名` |
+| 导出改写 | 直接拼接原 SELECT 顶层表达式，不增加外层查询 |
 | 装载 | `load_*.sh` → `sqlldr` |
+
+`export_by_map.sh` 使用 `render_export_sql.awk` 把原 SELECT 的顶层表达式直接改写为
+`NVL(TO_CHAR(表达式), '') || CHR(1) ...`，不再增加 CTE/外层查询，也不预声明列数。
+实际 `AS 列名` 用于 `.ctl` 列序；头部 `-- exportColumns:` 只做一致性校验。
+生成器另写 `-- exportNumberColumns:`；其中的目标 NUMBER 字段使用显式 `TM9`
+格式和 `NLS_NUMERIC_CHARACTERS='.,'`，并把 `.01` / `-.01` 规范为
+`0.01` / `-0.01`。旧 map SQL 缺少该头时导出会失败，须先重新生成 map SQL。
+
+每条导出记录末尾追加 `CHR(30)||CHR(31)||CHR(30)`，SQL*Plus 再追加 LF，
+组成 `X'1E1F1E0A'` 逻辑记录结束符。字段内普通 CR/LF 会原样保留。
+该控制字节序列为格式保留值；旧 `.dat` 不兼容新 `.ctl`，升级后须重新导出。
 
 ## 8. 失败时看哪里
 
-- 导出失败：`export-manifest` 中 `FAIL`；sqlplus / `NLS_LANG`。
-- 装载失败：`load-manifest` 中 `FAIL`；同前缀 `.log` / `.bad`。
+- 导出失败：`export-manifest` 中 `FAIL`；`export-error.log` 含 ORA/SP2（从 spool 抽出）及同前缀 `.log`。
+- 装载失败：`load-manifest` 中 `FAIL`；`load-error.log` 含 sqlldr 摘要 / 日志尾部；同前缀 `.log` / `.bad`。
 - 测试失败：对应片目录 `verify.result` / `verify.diff`；`batch_summary.tsv`。
 - `onError = stop` 时停在失败片；`continue` 时继续，进程最终仍非 0。

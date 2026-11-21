@@ -82,3 +82,5 @@ logs/
 *~
 map-sql-generator/*.zip
 *.zip
+scripts.zip
+scripts/check.txt
