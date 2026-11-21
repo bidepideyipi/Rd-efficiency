@@ -707,7 +707,7 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 | `tgtConnect` | 目标库 sqlldr 连接串（`load_by_map.sh`） |
 | `ctlCharset` | 可选，默认 `ZHS16GBK`（GBK）；须与 `.dat` 实际编码一致，写入 `.ctl` 的 `CHARACTERSET` |
 | `loadMode` | 可选，默认 `APPEND`；`APPEND` / `TRUNCATE` / `REPLACE` / `INSERT` |
-| `sqlldrErrors` / `sqlldrRows` / `sqlldrDirect` | 可选；传给 sqlldr |
+| `sqlldrErrors` / `sqlldrDirect` | 可选；传给 sqlldr |
 
 时间窗与表名仍由命令行传入（单表、单窗）：
 
@@ -737,7 +737,7 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 ./load_by_map.sh 20240101 20240102 IBPS_PAYMENTINIT
 # 等价于：
 # sqlldr userid=${tgtConnect} control=.../IBPS_PAYMENTINIT_20240101_20240102.ctl \
-#   log=....log bad=....bad errors=${sqlldrErrors} rows=${sqlldrRows} direct=${sqlldrDirect}
+#   log=....log bad=....bad errors=${sqlldrErrors} direct=${sqlldrDirect}
 ```
 
 批量（优先消费 `export-manifest.txt` 的 OK 行）：
@@ -747,7 +747,7 @@ Java **只保证** `{表名}.sql` 合约；Shell 负责参数替换与 **sqlplus
 # → {outDir}/_batch/load-manifest.txt
 ```
 
-`export-job.conf` 装载相关键：`tgtConnect`（必填）、`sqlldrErrors` / `sqlldrRows` / `sqlldrDirect`（可选）。
+`export-job.conf` 装载相关键：`tgtConnect`（必填）、`sqlldrErrors` / `sqlldrDirect`（可选）。
 `sqlldrErrors=-1` 为脚本级“处理到 EOF”：按 `.dat` 物理记录数设置 SQL*Loader
 `ERRORS`。仅当全部拒绝记录均为 `ORA-00001` 时按幂等重复成功；其他拒绝、discard
 或全字段为空仍失败。SQL*Loader 本身不接收 `ERRORS=-1`。

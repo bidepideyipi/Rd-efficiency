@@ -12,6 +12,7 @@
 | `load_batch.sh` | 批量装载：优先按导出清单 OK 行执行 |
 | `test_export_wrapper.sh` | 不连接数据库，回归验证导出 SQL 不增加外层查询 |
 | `test_load_by_map.sh` | 使用假 sqlldr 回归验证 `-1` 与错误分类 |
+| `test_failure_handling.sh` | 回归验证缺失/失败测试 SQL 不误报 PASS，continue 最终返回非 0 |
 | `test-job.conf` | 测试 SQL 目录、源/目标连接、表清单、时间片 |
 | `test_by_map.sh` | 单表单窗：执行成对测试 SQL → 比对 → `verify.result` |
 | `test_batch.sh` | 表清单 × 时间片，逐次调用 `test_by_map.sh` |
@@ -34,7 +35,6 @@ tgtConnect = user/password@TGT_SERVICE
 ctlCharset = ZHS16GBK
 loadMode = APPEND
 sqlldrErrors = -1
-sqlldrRows = 5000
 sqlldrDirect = false
 
 start = 20240301
@@ -56,7 +56,6 @@ tables =
 | `ctlCharset` | `export_by_map.sh` | `.dat` 的实际字符集，写入 `.ctl`；默认 `ZHS16GBK`（GBK） |
 | `loadMode` | `export_by_map.sh` | 写入 `.ctl`：`APPEND` / `TRUNCATE` / `REPLACE` / `INSERT` |
 | `sqlldrErrors` | `load_by_map.sh` | 可选，默认 `-1`：按 `.dat` 记录数处理到 EOF；非负整数则使用 SQL*Loader 原生错误上限 |
-| `sqlldrRows` | `load_by_map.sh` | 可选，默认 `5000` |
 | `sqlldrDirect` | `load_by_map.sh` | 可选，默认 `false` |
 | `start` / `end` | export_batch；load_batch 无清单时 | 左闭右开 |
 | `interval` | 同上 | 只按自然月，如 `1m`；`start`/`end` 建议月初 |
@@ -126,7 +125,7 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 ```
 
 优先读 `{outDir}/_batch/export-manifest.txt` 中状态为 `OK` 的行，逐片调用 `load_by_map.sh`。  
-若清单不存在，则按 conf 的 `files` × 时间片，对已存在的 `.ctl` 装载。
+若清单不存在，则按 conf 的 `tables` × 时间片，对已存在的 `.ctl` 装载。
 
 装载清单：`{outDir}/_batch/load-manifest.txt`  
 行格式：`表名,片开始,片结束,ctl路径,OK|FAIL`。

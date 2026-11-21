@@ -34,7 +34,7 @@ trim() {
 is_global_key() {
   case "$1" in
     sqlDir|outDir|start|end|interval|onError|tables|\
-    connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrRows|sqlldrDirect)
+    connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrDirect)
       return 0 ;;
     files|tmColumn)
       echo "config key '${1}' is removed; use tables section: 表名 = 时间列" >&2
@@ -43,7 +43,6 @@ is_global_key() {
   esac
 }
 
-SQL_DIR=""
 OUT_DIR=""
 START=""
 END=""
@@ -67,7 +66,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
 
   if is_global_key "${key}"; then
     case "${key}" in
-      sqlDir) SQL_DIR="${val}"; TABLES_SET=0 ;;
+      sqlDir) TABLES_SET=0 ;;
       outDir) OUT_DIR="${val}"; TABLES_SET=0 ;;
       start) START="${val}"; TABLES_SET=0 ;;
       end) END="${val}"; TABLES_SET=0 ;;
@@ -80,7 +79,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
           exit 1
         fi
         ;;
-      connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrRows|sqlldrDirect)
+      connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrDirect)
         TABLES_SET=0
         ;;
     esac

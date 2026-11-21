@@ -5,9 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TMP_DIR="$(mktemp -d)"
 TABLE_NAME="ZZ_EXPORT_WRAPPER_TEST_$$"
-RUN_SQL="/tmp/${TABLE_NAME}_run.sql"
-EXPORT_SQL="/tmp/${TABLE_NAME}_export.sql"
-INNER_SQL="/tmp/${TABLE_NAME}_inner.sql"
+EXPORT_SQL="${TMP_DIR}/captured-export.sql"
 cleanup() {
   rc=$?
   trap - EXIT
@@ -16,7 +14,6 @@ cleanup() {
     [[ -f "${TMP_DIR}/stderr.log" ]] && cat "${TMP_DIR}/stderr.log" >&2
   fi
   rm -rf "${TMP_DIR}"
-  rm -f "${RUN_SQL}" "${EXPORT_SQL}" "${INNER_SQL}"
   exit "${rc}"
 }
 trap cleanup EXIT
@@ -55,11 +52,14 @@ set -euo pipefail
 capture="${FAKE_SQLPLUS_CAPTURE:?}"
 cat > "${capture}"
 spool="$(awk '/^SPOOL / { print substr($0, 7); exit }' "${capture}")"
+export_sql="$(awk '/^@/ { print substr($0, 2); exit }' "${capture}")"
+cp "${export_sql}" "${FAKE_EXPORT_SQL_CAPTURE:?}"
 : > "${spool}"
 EOF
 chmod +x "${TMP_DIR}/bin/sqlplus" "${TMP_DIR}/export_by_map.sh"
 
 FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input.sql" \
+FAKE_EXPORT_SQL_CAPTURE="${EXPORT_SQL}" \
   PATH="${TMP_DIR}/bin:${PATH}" \
   "${TMP_DIR}/export_by_map.sh" 20260101 20260102 TRANSDT "${TABLE_NAME}" \
   >"${TMP_DIR}/stdout.log" 2>"${TMP_DIR}/stderr.log"
@@ -67,6 +67,8 @@ FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input.sql" \
 CTL="${TMP_DIR}/out/${TABLE_NAME}_20260101_20260102.ctl"
 
 grep -q '^SET RECSEP OFF$' "${TMP_DIR}/sqlplus-input.sql"
+grep -q '^WHENEVER OSERROR EXIT FAILURE$' "${TMP_DIR}/sqlplus-input.sql"
+grep -q '^WHENEVER SQLERROR EXIT FAILURE$' "${TMP_DIR}/sqlplus-input.sql"
 grep -q '^SELECT$' "${EXPORT_SQL}"
 grep -q "NVL(TO_CHAR((b.tradecode)), '')" "${EXPORT_SQL}"
 grep -Fq "TO_CHAR((a.transdt), 'TM9', 'NLS_NUMERIC_CHARACTERS=''.,''')" "${EXPORT_SQL}"

@@ -143,11 +143,19 @@ esac
 # TABLE_NAME = Sheet/sql 文件名（可含末位编号）；物理装载表名见 TARGET_TABLE。
 TPL="${SQL_DIR}/${TABLE_NAME}.sql"
 EXPORT_RENDERER="${SCRIPT_DIR}/render_export_sql.awk"
-RUN_SQL="/tmp/${TABLE_NAME}_run.sql"
-EXPORT_SQL="/tmp/${TABLE_NAME}_export.sql"
-INNER_SQL="/tmp/${TABLE_NAME}_inner.sql"
-EXPORT_COLUMNS_FILE="$(mktemp "/tmp/${TABLE_NAME}_export_columns.XXXXXX")"
-trap 'rm -f "${EXPORT_COLUMNS_FILE}"' EXIT
+if [[ ! "${TABLE_NAME}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+  echo "invalid table/sheet name: ${TABLE_NAME}" >&2
+  exit 1
+fi
+TMP_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/${TABLE_NAME}.XXXXXX")"
+RUN_SQL="${TMP_WORK_DIR}/run.sql"
+EXPORT_SQL="${TMP_WORK_DIR}/export.sql"
+INNER_SQL="${TMP_WORK_DIR}/inner.sql"
+EXPORT_COLUMNS_FILE="${TMP_WORK_DIR}/export_columns"
+cleanup() {
+  rm -rf "${TMP_WORK_DIR}"
+}
+trap cleanup EXIT
 # 产物文件名保留 Sheet 名，避免 HVPS_EXTPAYMENT1/2 等同物理表互相覆盖。
 OUT_DAT="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.dat"
 OUT_CTL="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.ctl"
@@ -285,6 +293,7 @@ SET TERMOUT OFF
 SET VERIFY OFF
 SET NULL ''
 SET SQLBLANKLINES ON
+WHENEVER OSERROR EXIT FAILURE
 WHENEVER SQLERROR EXIT FAILURE
 SPOOL ${OUT_DAT}
 @${EXPORT_SQL}
@@ -293,6 +302,15 @@ EXIT
 EOF
 SQLPLUS_RC=$?
 set -e
+
+if [[ "${SQLPLUS_RC}" -eq 0 && ! -f "${OUT_DAT}" ]]; then
+  echo "sqlplus did not create spool file: ${OUT_DAT}" >> "${OUT_LOG}"
+  SQLPLUS_RC=1
+fi
+if [[ "${SQLPLUS_RC}" -eq 0 ]] \
+    && grep -Eq 'SP2-[0-9]{4}' "${OUT_LOG}" 2>/dev/null; then
+  SQLPLUS_RC=1
+fi
 
 if [[ "${SQLPLUS_RC}" -ne 0 ]]; then
   # 先读出 sqlplus 捕获内容，再写 .log，避免 tee 截断同一文件导致内容丢失
@@ -307,7 +325,6 @@ if [[ "${SQLPLUS_RC}" -ne 0 ]]; then
   fi
   {
     echo "sqlplus export failed: ${TABLE_NAME} ${BEGIN_TM} ${END_TM} rc=${SQLPLUS_RC}"
-    echo "exportSql: ${EXPORT_SQL}"
     echo "spool: ${OUT_DAT}"
     echo "extracted columns (${#COLUMNS[@]}): ${COLUMNS[*]}"
     echo "export mode: direct SELECT rewrite (no outer query)"

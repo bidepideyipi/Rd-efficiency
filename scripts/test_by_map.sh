@@ -62,6 +62,7 @@ RESULT="${SLICE_DIR}/verify.result"
 DIFF="${SLICE_DIR}/verify.diff"
 : > "${DIFF}"
 RUN_LOG="${SLICE_DIR}/run.log"
+: > "${RUN_LOG}"
 
 AMOUNT_CHECK=false
 if [[ -f "${SHEET_DIR}/_meta.json" ]] && grep -q '"amountCheck": true' "${SHEET_DIR}/_meta.json"; then
@@ -72,13 +73,13 @@ run_sql() {
   local side="$1" sql_file="$2" out_dat="$3"
   local connect="${CONNECT}"
   [[ "${side}" == "tgt" ]] && connect="${TGT_CONNECT}"
-  local run_sql="${SLICE_DIR}/_run_${side}_$(basename "${sql_file}")"
+  local run_sql
+  run_sql="${SLICE_DIR}/_run_${side}_$(basename "${sql_file}")"
   sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
       -e "s/{{endTm}}/${END_TM}/g" \
       -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
       "${sql_file}" > "${run_sql}"
-  # shellcheck disable=SC2086
-  if ! sqlplus -s ${connect} <<EOF >"${RUN_LOG}.tmp" 2>&1
+  if ! sqlplus -s "${connect}" <<EOF >"${RUN_LOG}.tmp" 2>&1
 SET ECHO OFF
 SET FEEDBACK OFF
 SET HEADING OFF
@@ -87,6 +88,8 @@ SET LINESIZE 32767
 SET TRIMSPOOL ON
 SET TRIMOUT ON
 SET COLSEP ''
+WHENEVER OSERROR EXIT FAILURE
+WHENEVER SQLERROR EXIT SQL.SQLCODE
 SPOOL ${out_dat}
 @${run_sql}
 SPOOL OFF
@@ -113,7 +116,8 @@ pair_run() {
   local src="${SHEET_DIR}/${base}_src.sql"
   local tgt="${SHEET_DIR}/${base}_tgt.sql"
   if [[ ! -f "${src}" || ! -f "${tgt}" ]]; then
-    return 0
+    echo "required SQL pair missing: ${src} / ${tgt}" >&2
+    return 2
   fi
   run_sql src "${src}" "${SLICE_DIR}/${base}.src.dat" || return 2
   run_sql tgt "${tgt}" "${SLICE_DIR}/${base}.tgt.dat" || return 2
@@ -181,7 +185,8 @@ fi
 
 # --- T1 byday ---
 T1_BYDAY=SKIP
-if [[ -f "${SHEET_DIR}/01_count_byday_src.sql" ]]; then
+if [[ -f "${SHEET_DIR}/01_count_byday_src.sql" \
+      || -f "${SHEET_DIR}/01_count_byday_tgt.sql" ]]; then
   if pair_run 01_count_byday; then
     # 简化：整文件 cmp；失败再列前几行
     if cmp -s "${SLICE_DIR}/01_count_byday.src.dat" "${SLICE_DIR}/01_count_byday.tgt.dat"; then
@@ -215,18 +220,13 @@ else
 fi
 
 # --- T2 ---
-T2=SKIP
-T3=SKIP
-if [[ -f "${SHEET_DIR}/02_hash_src.sql" ]]; then
+if [[ -f "${SHEET_DIR}/02_hash_src.sql" \
+      || -f "${SHEET_DIR}/02_hash_tgt.sql" ]]; then
   if pair_run 02_hash; then
     if cmp -s "${SLICE_DIR}/02_hash.src.dat" "${SLICE_DIR}/02_hash.tgt.dat"; then
-      T2=PASS
-      T3=PASS
       LINES+=("T2_hash=PASS")
       LINES+=("T3_derived=PASS reason=T2_PASS")
     else
-      T2=FAIL
-      T3=SKIP
       fail
       _diff_rows=()
       while IFS= read -r _r; do _diff_rows+=("${_r}"); done < <(diff -u "${SLICE_DIR}/02_hash.src.dat" "${SLICE_DIR}/02_hash.tgt.dat" | head -n "${MAX_DIFF_LINES}" || true)
@@ -248,7 +248,8 @@ fi
 # --- T5 ---
 check_empty_dup() {
   local base="$1" label="$2"
-  if [[ ! -f "${SHEET_DIR}/${base}_src.sql" ]]; then
+  if [[ ! -f "${SHEET_DIR}/${base}_src.sql" \
+        && ! -f "${SHEET_DIR}/${base}_tgt.sql" ]]; then
     LINES+=("${label}=SKIP")
     return 0
   fi
@@ -272,7 +273,8 @@ check_empty_dup() {
 
 check_empty_dup 05_pk_dup T5_dup
 
-if [[ -f "${SHEET_DIR}/05_pk_null_src.sql" ]]; then
+if [[ -f "${SHEET_DIR}/05_pk_null_src.sql" \
+      || -f "${SHEET_DIR}/05_pk_null_tgt.sql" ]]; then
   if pair_run 05_pk_null; then
     SN="$(head -n1 "${SLICE_DIR}/05_pk_null.src.dat" 2>/dev/null || echo 0)"
     TN="$(head -n1 "${SLICE_DIR}/05_pk_null.tgt.dat" 2>/dev/null || echo 0)"
@@ -292,7 +294,8 @@ if [[ -f "${SHEET_DIR}/05_pk_null_src.sql" ]]; then
   fi
 fi
 
-if [[ -f "${SHEET_DIR}/05_pk_stat_src.sql" ]]; then
+if [[ -f "${SHEET_DIR}/05_pk_stat_src.sql" \
+      || -f "${SHEET_DIR}/05_pk_stat_tgt.sql" ]]; then
   if pair_run 05_pk_stat; then
     SS="$(head -n1 "${SLICE_DIR}/05_pk_stat.src.dat" || true)"
     TS="$(head -n1 "${SLICE_DIR}/05_pk_stat.tgt.dat" || true)"
@@ -314,7 +317,8 @@ if [[ -f "${SHEET_DIR}/05_pk_stat_src.sql" ]]; then
   fi
 fi
 
-if [[ -f "${SHEET_DIR}/05_pk_set_src.sql" ]]; then
+if [[ -f "${SHEET_DIR}/05_pk_set_src.sql" \
+      || -f "${SHEET_DIR}/05_pk_set_tgt.sql" ]]; then
   if pair_run 05_pk_set; then
     if cmp -s "${SLICE_DIR}/05_pk_set.src.dat" "${SLICE_DIR}/05_pk_set.tgt.dat"; then
       LINES+=("T5_set=PASS")

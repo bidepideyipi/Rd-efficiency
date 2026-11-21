@@ -16,7 +16,6 @@ cat > "${TMP_DIR}/export-job.conf" <<EOF
 outDir = ${TMP_DIR}/out
 tgtConnect = test/test@TARGET
 sqlldrErrors = -1
-sqlldrRows = 5000
 sqlldrDirect = false
 EOF
 

@@ -193,6 +193,7 @@ mkdir -p "${TEST_OUT_DIR}"
 SUMMARY="${TEST_OUT_DIR}/batch_summary.tsv"
 printf 'sheet\tbegin\tend\toutcome\texit\n' > "${SUMMARY}"
 
+BATCH_RC=0
 for i in "${!RESOLVED_TABLES[@]}"; do
   TABLE="${RESOLVED_TABLES[$i]}"
   COL="${RESOLVED_COLUMNS[$i]}"
@@ -206,11 +207,17 @@ for i in "${!RESOLVED_TABLES[@]}"; do
     OUTCOME=PASS
     [[ "${RC}" -ne 0 ]] && OUTCOME=FAIL
     printf '%s\t%s\t%s\t%s\t%s\n' "${TABLE}" "${B}" "${E}" "${OUTCOME}" "${RC}" >> "${SUMMARY}"
-    if [[ "${RC}" -ne 0 && "${ON_ERROR}" == "stop" ]]; then
-      echo "stopped on error: ${TABLE} ${B} ${E} rc=${RC}" >&2
-      exit "${RC}"
+    if [[ "${RC}" -ne 0 ]]; then
+      if [[ "${RC}" -gt "${BATCH_RC}" ]]; then
+        BATCH_RC="${RC}"
+      fi
+      if [[ "${ON_ERROR}" == "stop" ]]; then
+        echo "stopped on error: ${TABLE} ${B} ${E} rc=${RC}" >&2
+        exit "${RC}"
+      fi
     fi
   done
 done
 
 echo "summary: ${SUMMARY}"
+exit "${BATCH_RC}"

@@ -69,15 +69,10 @@ conf_get_optional() {
 OUT_DIR="$(conf_get outDir)"
 TGT_CONNECT="$(conf_get tgtConnect)"
 SQLLDR_ERRORS="$(conf_get_optional sqlldrErrors -1)"
-SQLLDR_ROWS="$(conf_get_optional sqlldrRows 5000)"
 SQLLDR_DIRECT="$(conf_get_optional sqlldrDirect false)"
 
 if [[ "${SQLLDR_ERRORS}" != "-1" && ! "${SQLLDR_ERRORS}" =~ ^[0-9]+$ ]]; then
   echo "invalid sqlldrErrors: ${SQLLDR_ERRORS} (need -1 or non-negative integer)" >&2
-  exit 1
-fi
-if [[ ! "${SQLLDR_ROWS}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "invalid sqlldrRows: ${SQLLDR_ROWS}" >&2
   exit 1
 fi
 case "${SQLLDR_DIRECT}" in
@@ -167,7 +162,6 @@ sqlldr userid="${TGT_CONNECT}" \
   log="${LOG}" \
   bad="${BAD}" \
   errors="${SQLLDR_ERRORS_ARG}" \
-  rows="${SQLLDR_ROWS}" \
   direct="${DIRECT_ARG}" >"${SQLLDR_STDOUT}" 2>&1
 SQLLDR_RC=$?
 set -e
