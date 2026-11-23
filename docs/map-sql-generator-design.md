@@ -779,14 +779,15 @@ TRAILING NULLCOLS
 
 ### 7.3 多文件与日期分片
 
-`export_batch.sh` 读同一份 `export-job.conf`，按文件列表 × 时间片串行调用 `export_by_map.sh`。不使用环境变量。
+`export_batch.sh` 读同一份 `export-job.conf`：配置时间列的表按时间片串行调用
+`export_by_map.sh`；时间列留空的表按完整范围只调用一次。不使用环境变量。
 
 | 键 | 含义 |
 |----|------|
 | `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
 | `interval` | 只按自然月：`Nm`，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
-| `tables` | **每表必配时间列**：后续行 `表名 = 时间列`（任意 Oracle 标识符）。无全局默认；已移除 `tmColumn` / `files` |
+| `tables` | 后续行 `表名 = 时间列`（任意 Oracle 标识符）；无需时间范围时右侧留空，整表只执行一次。无全局默认；已移除 `tmColumn` / `files` |
 
 ```bash
 ./export_batch.sh

@@ -1,5 +1,6 @@
 #!/bin/bash
-# 按 test-job.conf 的 tables × 时间片，串行调用 test_by_map.sh。
+# 按 test-job.conf 的 tables 串行调用 test_by_map.sh。
+# 配置时间列的表按时间片执行；时间列留空的表不拼时间条件，并在完整范围内只执行一次。
 # 用法：
 #   ./test_batch.sh
 #   ./test_batch.sh yyyyMMdd
@@ -55,18 +56,24 @@ add_table_mapping() {
     exit 1
   fi
   if [[ -z "${columns}" ]]; then
-    echo "time column required for table: ${table}" >&2
-    exit 1
-  fi
-  if [[ "${columns}" == *,* ]]; then
+    src_col=""
+    tgt_col=""
+  elif [[ "${columns}" == *,* ]]; then
     src_col="$(trim "${columns%%,*}")"
     tgt_col="$(trim "${columns#*,}")"
   else
     src_col="${columns}"
     tgt_col="${columns}"
   fi
-  check_column "${src_col}"
-  check_column "${tgt_col}"
+  if [[ -z "${src_col}" || -z "${tgt_col}" ]]; then
+    if [[ -n "${src_col}" || -n "${tgt_col}" ]]; then
+      echo "source and target time columns must both be set or both be empty: ${table}" >&2
+      exit 1
+    fi
+  else
+    check_column "${src_col}"
+    check_column "${tgt_col}"
+  fi
   RESOLVED_TABLES+=("${table}")
   RESOLVED_SRC_COLUMNS+=("${src_col}")
   RESOLVED_TGT_COLUMNS+=("${tgt_col}")
@@ -204,29 +211,40 @@ SUMMARY="${TEST_OUT_DIR}/batch_summary.tsv"
 printf 'sheet\tbegin\tend\toutcome\texit\n' > "${SUMMARY}"
 
 BATCH_RC=0
+run_test_slice() {
+  local table="$1" src_col="$2" tgt_col="$3" begin="$4" end="$5"
+  local rc outcome
+  set +e
+  "${ONE_SHOT}" "${begin}" "${end}" "${src_col}" "${tgt_col}" "${table}"
+  rc=$?
+  set -e
+  outcome=PASS
+  [[ "${rc}" -ne 0 ]] && outcome=FAIL
+  printf '%s\t%s\t%s\t%s\t%s\n' "${table}" "${begin}" "${end}" "${outcome}" "${rc}" >> "${SUMMARY}"
+  if [[ "${rc}" -ne 0 ]]; then
+    if [[ "${rc}" -gt "${BATCH_RC}" ]]; then
+      BATCH_RC="${rc}"
+    fi
+    if [[ "${ON_ERROR}" == "stop" ]]; then
+      echo "stopped on error: ${table} ${begin} ${end} rc=${rc}" >&2
+      exit "${rc}"
+    fi
+  fi
+}
+
 for i in "${!RESOLVED_TABLES[@]}"; do
   TABLE="${RESOLVED_TABLES[$i]}"
   SRC_COL="${RESOLVED_SRC_COLUMNS[$i]}"
   TGT_COL="${RESOLVED_TGT_COLUMNS[$i]}"
+  if [[ -z "${SRC_COL}" ]]; then
+    LAST_SLICE_INDEX=$((${#SLICES_END[@]} - 1))
+    run_test_slice "${TABLE}" "${SRC_COL}" "${TGT_COL}" \
+      "${SLICES_BEGIN[0]}" "${SLICES_END[$LAST_SLICE_INDEX]}"
+    continue
+  fi
   for j in "${!SLICES_BEGIN[@]}"; do
-    B="${SLICES_BEGIN[$j]}"
-    E="${SLICES_END[$j]}"
-    set +e
-    "${ONE_SHOT}" "${B}" "${E}" "${SRC_COL}" "${TGT_COL}" "${TABLE}"
-    RC=$?
-    set -e
-    OUTCOME=PASS
-    [[ "${RC}" -ne 0 ]] && OUTCOME=FAIL
-    printf '%s\t%s\t%s\t%s\t%s\n' "${TABLE}" "${B}" "${E}" "${OUTCOME}" "${RC}" >> "${SUMMARY}"
-    if [[ "${RC}" -ne 0 ]]; then
-      if [[ "${RC}" -gt "${BATCH_RC}" ]]; then
-        BATCH_RC="${RC}"
-      fi
-      if [[ "${ON_ERROR}" == "stop" ]]; then
-        echo "stopped on error: ${TABLE} ${B} ${E} rc=${RC}" >&2
-        exit "${RC}"
-      fi
-    fi
+    run_test_slice "${TABLE}" "${SRC_COL}" "${TGT_COL}" \
+      "${SLICES_BEGIN[$j]}" "${SLICES_END[$j]}"
   done
 done
 

@@ -50,6 +50,7 @@ INTERVAL=""
 ON_ERROR="stop"
 TABLES_SET=0
 RESOLVED_TABLES=()
+RESOLVED_HAS_TIME=()
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
   line="$(trim "${raw}")"
@@ -93,12 +94,12 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
       echo "invalid table name: ${key}" >&2
       exit 1
     fi
-    # 装载回退扫片不需要时间列值，但仍要求配置行完整。
-    if [[ -z "$(trim "${val}")" ]]; then
-      echo "tmColumn required for table: ${table}" >&2
-      exit 1
-    fi
     RESOLVED_TABLES+=("${table}")
+    if [[ -z "$(trim "${val}")" ]]; then
+      RESOLVED_HAS_TIME+=(0)
+    else
+      RESOLVED_HAS_TIME+=(1)
+    fi
   else
     echo "unknown config key: ${key}" >&2
     exit 1
@@ -194,7 +195,15 @@ else
     exit 1
   fi
 
-  for table in "${RESOLVED_TABLES[@]}"; do
+  for i in "${!RESOLVED_TABLES[@]}"; do
+    table="${RESOLVED_TABLES[$i]}"
+    if [[ "${RESOLVED_HAS_TIME[$i]}" -eq 0 ]]; then
+      ctl="${OUT_DIR}/${table}_${START}_${END}.ctl"
+      if [[ -f "${ctl}" ]]; then
+        JOBS+=("${table}|${START}|${END}")
+      fi
+      continue
+    fi
     cursor="${START}"
     while ts_lt "${cursor}" "${END}"; do
       next="$(add_interval "${cursor}" "${INTERVAL_N}")"

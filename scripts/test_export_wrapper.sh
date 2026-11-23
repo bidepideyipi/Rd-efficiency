@@ -20,6 +20,7 @@ trap cleanup EXIT
 
 mkdir -p "${TMP_DIR}/bin" "${TMP_DIR}/sql" "${TMP_DIR}/out"
 cp "${ROOT_DIR}/export_by_map.sh" "${TMP_DIR}/export_by_map.sh"
+cp "${ROOT_DIR}/export_batch.sh" "${TMP_DIR}/export_batch.sh"
 cp "${ROOT_DIR}/render_export_sql.awk" "${TMP_DIR}/render_export_sql.awk"
 
 cat > "${TMP_DIR}/export-job.conf" <<EOF
@@ -42,8 +43,11 @@ SELECT
     ELSE 'a,b' END) AS COMPLEXCOL
 FROM source_a a
 LEFT JOIN source_b b ON b.id = a.id
-WHERE a.transdt >= '{{beginTm}}'
-  AND a.transdt < '{{endTm}}';
+WHERE a.{{tmColumn}} >= '{{beginTm}}'
+  AND a.{{tmColumn}} < '{{endTm}}'
+  AND (
+    a.active = 'Y'
+  );
 EOF
 
 cat > "${TMP_DIR}/bin/sqlplus" <<'EOF'
@@ -56,7 +60,7 @@ export_sql="$(awk '/^@/ { print substr($0, 2); exit }' "${capture}")"
 cp "${export_sql}" "${FAKE_EXPORT_SQL_CAPTURE:?}"
 : > "${spool}"
 EOF
-chmod +x "${TMP_DIR}/bin/sqlplus" "${TMP_DIR}/export_by_map.sh"
+chmod +x "${TMP_DIR}/bin/sqlplus" "${TMP_DIR}/export_by_map.sh" "${TMP_DIR}/export_batch.sh"
 
 FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input.sql" \
 FAKE_EXPORT_SQL_CAPTURE="${EXPORT_SQL}" \
@@ -95,5 +99,41 @@ if grep -q 'STALE_COLUMN' "${CTL}"; then
   exit 1
 fi
 grep -q 'exportColumns header does not match actual SELECT aliases' "${TMP_DIR}/stderr.log"
+
+# 显式传空时间列时，删除旧模板中的时间谓词，并保留后续业务条件。
+FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input-no-time.sql" \
+FAKE_EXPORT_SQL_CAPTURE="${TMP_DIR}/captured-export-no-time.sql" \
+  PATH="${TMP_DIR}/bin:${PATH}" \
+  "${TMP_DIR}/export_by_map.sh" 20260101 20260301 "" "${TABLE_NAME}" \
+  >"${TMP_DIR}/stdout-no-time.log" 2>"${TMP_DIR}/stderr-no-time.log"
+if grep -Eq '\{\{(beginTm|endTm|tmColumn)\}\}' "${TMP_DIR}/captured-export-no-time.sql"; then
+  echo "time placeholder remained when tmColumn was empty" >&2
+  exit 1
+fi
+grep -Eq "^[[:space:]]*WHERE \\($" "${TMP_DIR}/captured-export-no-time.sql"
+grep -q "a.active = 'Y'" "${TMP_DIR}/captured-export-no-time.sql"
+
+# 批处理中的无时间列整表只能执行一次，不能按月重复导出。
+cat > "${TMP_DIR}/export-job.conf" <<EOF
+sqlDir = ${TMP_DIR}/sql
+outDir = ${TMP_DIR}/out
+connect = test/test@SOURCE
+tgtConnect = test/test@TARGET
+start = 20260101
+end = 20260301
+interval = 1m
+onError = stop
+tables =
+  ${TABLE_NAME} =
+EOF
+cat > "${TMP_DIR}/export_by_map.sh" <<'EOF'
+#!/bin/bash
+printf '<%s>\n' "$*" >> "${FAKE_EXPORT_CALLS:?}"
+EOF
+chmod +x "${TMP_DIR}/export_by_map.sh"
+FAKE_EXPORT_CALLS="${TMP_DIR}/export.calls" "${TMP_DIR}/export_batch.sh" \
+  >"${TMP_DIR}/batch.stdout" 2>"${TMP_DIR}/batch.stderr"
+grep -qx "<20260101 20260301  ${TABLE_NAME}>" "${TMP_DIR}/export.calls"
+[[ "$(wc -l < "${TMP_DIR}/export.calls" | tr -d '[:space:]')" -eq 1 ]]
 
 echo "export wrapper regression test: OK"

@@ -20,13 +20,13 @@ testOutDir = ${TMP_DIR}/out
 connect = test/test@SOURCE
 tgtConnect = test/test@TARGET
 start = 20260101
-end = 20260201
+end = 20260301
 interval = 1m
 onError = continue
-byDayCheck = false
+byDayCheck = true
 tables =
   T = TRANSDT,WORKDATE
-  U = WORKDATE
+  U =
 EOF
 
 cat > "${TMP_DIR}/sql/T/02_hash_tgt.sql" <<'EOF'
@@ -138,6 +138,38 @@ grep -q '^T5_null=PASS$' "${TMP_DIR}/out/T_20260101_20260201/verify.result"
 grep -q '^T5_stat=PASS cnt=2 dist=2$' "${TMP_DIR}/out/T_20260101_20260201/verify.result"
 grep -q '^T5_set=PASS$' "${TMP_DIR}/out/T_20260101_20260201/verify.result"
 
+# 时间列留空时，旧模板中的时间谓词应被删除，后续业务 AND 应恢复为 WHERE。
+cat > "${TMP_DIR}/sql/T/01_count_total_src.sql" <<'EOF'
+SELECT COUNT(*) FROM SOURCE_TABLE s
+WHERE s.{{srcTmColumn}} >= '{{beginTm}}'
+  AND s.{{srcTmColumn}} < '{{endTm}}'
+  AND (
+    s.ACTIVE = 'Y'
+  );
+EOF
+cat > "${TMP_DIR}/sql/T/01_count_total_tgt.sql" <<'EOF'
+SELECT COUNT(*) FROM TARGET_TABLE t
+WHERE t.{{tgtTmColumn}} >= '{{beginTm}}'
+  AND t.{{tgtTmColumn}} < '{{endTm}}'
+  AND (
+    t.ACTIVE = 'Y'
+  );
+EOF
+: > "${TMP_DIR}/run-sql.capture"
+rm -rf "${TMP_DIR}/out/T_20260101_20260201"
+FAKE_RUN_SQL_CAPTURE="${TMP_DIR}/run-sql.capture" PATH="${TMP_DIR}/bin:${PATH}" \
+  "${TMP_DIR}/test_by_map.sh" 20260101 20260201 "" "" T \
+  >"${TMP_DIR}/no-time.out" 2>&1
+if grep -Eq '\{\{(beginTm|endTm|srcTmColumn|tgtTmColumn|tmColumn)\}\}' "${TMP_DIR}/run-sql.capture"; then
+  echo "time placeholder remained when time columns were empty" >&2
+  exit 1
+fi
+grep -Eq "^[[:space:]]*WHERE \\($" "${TMP_DIR}/run-sql.capture"
+grep -q "s.ACTIVE = 'Y'" "${TMP_DIR}/run-sql.capture"
+grep -q "t.ACTIVE = 'Y'" "${TMP_DIR}/run-sql.capture"
+grep -q '^timeWindow=false$' "${TMP_DIR}/out/T_20260101_20260201/verify.result"
+grep -q '^T1_byday=SKIP reason=no_time_column$' "${TMP_DIR}/out/T_20260101_20260201/verify.result"
+
 cat > "${TMP_DIR}/test_by_map.sh" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >> "${FAKE_TEST_CALLS:?}"
@@ -156,9 +188,11 @@ if [[ "${rc}" -ne 1 ]]; then
   exit 1
 fi
 grep -qx '20260101 20260201 TRANSDT WORKDATE T' "${TMP_DIR}/calls"
-grep -qx '20260101 20260201 WORKDATE WORKDATE U' "${TMP_DIR}/calls"
-[[ "$(wc -l < "${TMP_DIR}/calls" | tr -d '[:space:]')" -eq 2 ]]
+grep -qx '20260201 20260301 TRANSDT WORKDATE T' "${TMP_DIR}/calls"
+grep -qx '20260101 20260301   U' "${TMP_DIR}/calls"
+[[ "$(wc -l < "${TMP_DIR}/calls" | tr -d '[:space:]')" -eq 3 ]]
 grep -q $'^T\t20260101\t20260201\tFAIL\t1$' "${TMP_DIR}/out/batch_summary.tsv"
-grep -q $'^U\t20260101\t20260201\tFAIL\t1$' "${TMP_DIR}/out/batch_summary.tsv"
+grep -q $'^T\t20260201\t20260301\tFAIL\t1$' "${TMP_DIR}/out/batch_summary.tsv"
+grep -q $'^U\t20260101\t20260301\tFAIL\t1$' "${TMP_DIR}/out/batch_summary.tsv"
 
 echo "failure handling regression test: OK"

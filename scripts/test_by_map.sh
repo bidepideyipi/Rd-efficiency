@@ -60,12 +60,21 @@ if [[ -z "${TEST_SQL_DIR}" || -z "${TEST_OUT_DIR}" || -z "${CONNECT}" || -z "${T
   echo "testSqlDir/testOutDir/connect/tgtConnect required in ${CONF}" >&2
   exit 2
 fi
-for column in "${SRC_TM_COLUMN}" "${TGT_TM_COLUMN}"; do
-  if [[ ! "${column}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
-    echo "invalid time column: ${column}" >&2
+HAS_TIME_WINDOW=true
+if [[ -z "${SRC_TM_COLUMN}" || -z "${TGT_TM_COLUMN}" ]]; then
+  if [[ -n "${SRC_TM_COLUMN}" || -n "${TGT_TM_COLUMN}" ]]; then
+    echo "source and target time columns must both be set or both be empty" >&2
     exit 2
   fi
-done
+  HAS_TIME_WINDOW=false
+else
+  for column in "${SRC_TM_COLUMN}" "${TGT_TM_COLUMN}"; do
+    if [[ ! "${column}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+      echo "invalid time column: ${column}" >&2
+      exit 2
+    fi
+  done
+fi
 if [[ "${BY_DAY_CHECK}" != true && "${BY_DAY_CHECK}" != false ]]; then
   echo "invalid byDayCheck: ${BY_DAY_CHECK} (true|false)" >&2
   exit 2
@@ -100,12 +109,38 @@ run_sql() {
   fi
   local run_sql tmp_log started elapsed rc
   run_sql="${SLICE_DIR}/_run_${side}_$(basename "${sql_file}")"
-  sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
-      -e "s/{{endTm}}/${END_TM}/g" \
-      -e "s/{{srcTmColumn}}/${SRC_TM_COLUMN}/g" \
-      -e "s/{{tgtTmColumn}}/${TGT_TM_COLUMN}/g" \
-      -e "s/{{tmColumn}}/${side_column}/g" \
-      "${sql_file}" > "${run_sql}"
+  if [[ "${HAS_TIME_WINDOW}" == true ]]; then
+    sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
+        -e "s/{{endTm}}/${END_TM}/g" \
+        -e "s/{{srcTmColumn}}/${SRC_TM_COLUMN}/g" \
+        -e "s/{{tgtTmColumn}}/${TGT_TM_COLUMN}/g" \
+        -e "s/{{tmColumn}}/${side_column}/g" \
+        "${sql_file}" > "${run_sql}"
+  else
+    # 兼容已生成的测试 SQL：去掉时间谓词，并保留其后的业务 WHERE 条件。
+    awk '
+      function has_time_placeholder(line) {
+        return line ~ /\{\{(beginTm|endTm|srcTmColumn|tgtTmColumn|tmColumn|tmFormat)\}\}/
+      }
+      {
+        if (has_time_placeholder($0)) {
+          if ($0 ~ /^[[:space:]]*WHERE[[:space:]]/) {
+            removed_where = 1
+          }
+          next
+        }
+        if (removed_where && $0 ~ /^[[:space:]]*AND[[:space:]]/) {
+          sub(/AND/, "WHERE")
+          removed_where = 0
+        }
+        print
+      }
+    ' "${sql_file}" > "${run_sql}"
+  fi
+  if grep -Eq '\{\{(beginTm|endTm|srcTmColumn|tgtTmColumn|tmColumn|tmFormat)\}\}' "${run_sql}"; then
+    echo "unresolved time placeholder: ${sql_file}" >&2
+    return 2
+  fi
   tmp_log="${RUN_LOG}.tmp"
   rm -f "${tmp_log}" "${out_dat}"
   started="$(date +%s)"
@@ -285,6 +320,8 @@ if [[ "${INFRA_ERROR}" == true ]]; then
   LINES+=("T1_byday=SKIP reason=prior_error")
 elif [[ "${BY_DAY_CHECK}" != true ]]; then
   LINES+=("T1_byday=SKIP reason=disabled")
+elif [[ "${HAS_TIME_WINDOW}" != true ]]; then
+  LINES+=("T1_byday=SKIP reason=no_time_column")
 elif [[ -f "${SHEET_DIR}/01_count_byday_src.sql" \
         || -f "${SHEET_DIR}/01_count_byday_tgt.sql" ]]; then
   if pair_run 01_count_byday; then
@@ -426,6 +463,7 @@ fi
   echo "endTm=${END_TM}"
   echo "srcTmColumn=${SRC_TM_COLUMN}"
   echo "tgtTmColumn=${TGT_TM_COLUMN}"
+  echo "timeWindow=${HAS_TIME_WINDOW}"
   echo "byDayCheck=${BY_DAY_CHECK}"
   echo "amountCheck=${AMOUNT_CHECK}"
   echo "overall=${OVERALL}"

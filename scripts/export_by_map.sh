@@ -6,7 +6,7 @@ set -euo pipefail
 
 BEGIN_TM="${1:?beginTm required}"
 END_TM="${2:?endTm required}"
-TM_COLUMN="${3:-TRANDATE}"
+TM_COLUMN="${3-TRANDATE}"
 TABLE_NAME="${4:-IBPS_PAYMENTINIT}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -162,8 +162,8 @@ OUT_CTL="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.ctl"
 OUT_LOG="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.log"
 OUT_BAD="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.bad"
 
-# 任意源表时间列均可；仅校验为可嵌入 s.{{tmColumn}} 的标识符。
-if [[ ! "${TM_COLUMN}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+# 任意源表时间列均可；空值表示整表导出，不拼时间范围。
+if [[ -n "${TM_COLUMN}" && ! "${TM_COLUMN}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
   echo "invalid tmColumn: ${TM_COLUMN} (need Oracle identifier)" >&2
   exit 1
 fi
@@ -185,10 +185,37 @@ fi
 
 mkdir -p "${OUT_DIR}"
 
-sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
-    -e "s/{{endTm}}/${END_TM}/g" \
-    -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
-    "${TPL}" > "${RUN_SQL}"
+if [[ -n "${TM_COLUMN}" ]]; then
+  sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
+      -e "s/{{endTm}}/${END_TM}/g" \
+      -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
+      "${TPL}" > "${RUN_SQL}"
+else
+  # 兼容已生成的模板：删除时间谓词；若它原本占用 WHERE，则把后续业务 AND 改为 WHERE。
+  awk '
+    function has_time_placeholder(line) {
+      return line ~ /\{\{(beginTm|endTm|tmColumn|tmFormat)\}\}/
+    }
+    {
+      if (has_time_placeholder($0)) {
+        if ($0 ~ /^[[:space:]]*WHERE[[:space:]]/) {
+          removed_where = 1
+        }
+        next
+      }
+      if (removed_where && $0 ~ /^[[:space:]]*AND[[:space:]]/) {
+        sub(/AND/, "WHERE")
+        removed_where = 0
+      }
+      print
+    }
+  ' "${TPL}" > "${RUN_SQL}"
+fi
+
+if grep -Eq '\{\{(beginTm|endTm|tmColumn|tmFormat)\}\}' "${RUN_SQL}"; then
+  echo "unresolved time placeholder in rendered SQL: ${TPL}" >&2
+  exit 1
+fi
 
 # 去掉末尾分号与空行，作为子查询体。
 # SQL*Plus 默认空行即结束语句。

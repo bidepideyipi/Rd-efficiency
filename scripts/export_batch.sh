@@ -1,7 +1,7 @@
 #!/bin/bash
-# 按 export-job.conf 的 tables（表名=时间列）× 时间片，串行调用 export_by_map.sh。
+# 按 export-job.conf 的 tables 串行调用 export_by_map.sh。
 # 不使用环境变量。时间窗左闭右开：[sliceBegin, sliceEnd)。
-# 每张表必须在 tables 段显式配置时间列，无全局 tmColumn 默认值。
+# 配置时间列的表按时间片执行；时间列留空的表不拼时间条件，并在完整范围内只执行一次。
 #
 # 用法：
 #   ./export_batch.sh
@@ -91,11 +91,9 @@ add_table_mapping() {
     echo "invalid table name: ${table}" >&2
     exit 1
   fi
-  if [[ -z "${col}" ]]; then
-    echo "tmColumn required for table: ${table}" >&2
-    exit 1
+  if [[ -n "${col}" ]]; then
+    check_column "${col}"
   fi
-  check_column "${col}"
   RESOLVED_TABLES+=("${table}")
   RESOLVED_COLUMNS+=("${col}")
 }
@@ -233,7 +231,7 @@ if [[ -n "${ONE_TABLE_SPEC}" ]]; then
   RESOLVED_COLUMNS=()
   add_table_mapping "${ONE_TABLE_SPEC%%=*}" "${ONE_TABLE_SPEC#*=}"
 elif [[ ${#RESOLVED_TABLES[@]} -eq 0 ]]; then
-  echo "tables section is required; each line: 表名 = 时间列" >&2
+  echo "tables section is required; each line: 表名 = 时间列（整表导出可留空）" >&2
   exit 1
 fi
 
@@ -318,7 +316,7 @@ i=0
 while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
   table="${RESOLVED_TABLES[$i]}"
   col="${RESOLVED_COLUMNS[$i]}"
-  if [[ "${SINGLE_SLICE}" -eq 1 ]]; then
+  if [[ "${SINGLE_SLICE}" -eq 1 || -z "${col}" ]]; then
     run_export_slice "${table}" "${START}" "${END}" "${col}"
   else
     cursor="${START}"

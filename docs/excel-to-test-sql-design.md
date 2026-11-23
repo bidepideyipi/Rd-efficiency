@@ -408,6 +408,7 @@ byDayCheck = false
 tables =
   IBPS_PAYMENTINIT = TRANDATE
   HVPS_PAYMENTINIT = TRANSDT,WORKDATE
+  IBPS_MOBILEINFO =
 ```
 
 | 键 | 说明 |
@@ -415,15 +416,15 @@ tables =
 | `testSqlDir` | 测试 SQL 根目录（含各 `{Sheet}/`） |
 | `testOutDir` | 结果与差异报告目录 |
 | `connect` / `tgtConnect` | 源 / 目标 sqlplus 连接（目标侧用 sqlplus 查数，不用 sqlldr） |
-| `tables` | `Sheet名 = 源时间列[,目标时间列]`；单列表示两端同名 |
+| `tables` | `Sheet名 = 源时间列[,目标时间列]`；单列表示两端同名；两端都无需时间范围时右侧留空 |
 | `byDayCheck` | 默认 `false`；需要定位每日差异时才执行 T1 按日查询 |
 
 ### 6.3 单表单窗流程（`test_by_map.sh`）
 
 ```text
-1. 校验参数 beginTm / endTm / srcTmColumn / tgtTmColumn / Sheet
-2. sed 替换各 *_src.sql → 临时 SQL → sqlplus connect → SPOOL *.src.dat
-3. sed 替换各 *_tgt.sql → sqlplus tgtConnect → SPOOL *.tgt.dat
+1. 校验参数 beginTm / endTm / srcTmColumn / tgtTmColumn / Sheet；时间列可同时为空
+2. 替换各 *_src.sql（时间列为空时删除时间谓词）→ 临时 SQL → sqlplus connect → SPOOL *.src.dat
+3. 替换各 *_tgt.sql（规则同上）→ sqlplus tgtConnect → SPOOL *.tgt.dat
 4. 比对 T1/T2，并从 T2 明细派生 T5 重复键、空键、统计和集合检查
 5. 写 verify.result / verify.diff
 6. 退出码：PASS=0 / FAIL=1 / 基础设施错误=2；batch 的 onError=stop 遇非 0 即停
@@ -433,7 +434,8 @@ tables =
 
 ### 6.4 批量（`test_batch.sh`）
 
-与 `export_batch.sh` 对齐：`start/end/interval` × `tables` 串行调用 `test_by_map.sh`；支持指定单日、单表调试参数。
+与 `export_batch.sh` 对齐：有时间列的表按 `start/end/interval` 分片；时间列为空的表不拼时间范围，
+在完整 `start/end` 范围只执行一次。支持指定单日、单表调试参数。
 
 ### 6.5 结果读取、比对与验证报告（定稿）
 

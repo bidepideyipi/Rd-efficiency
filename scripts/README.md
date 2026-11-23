@@ -45,6 +45,7 @@ onError = stop
 tables =
   IBPS_PAYMENTINIT = TRANDATE
   HVPS_PAYMENTINIT = WORKDATE
+  IBPS_MOBILEINFO =
 ```
 
 | 键 | 谁用 | 说明 |
@@ -60,9 +61,11 @@ tables =
 | `start` / `end` | export_batch；load_batch 无清单时 | 左闭右开 |
 | `interval` | 同上 | 只按自然月，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | export_batch / load_batch | `stop` / `continue` |
-| `tables` | export_batch；load_batch 无清单时 | **每表一行** `表名 = 时间列`（必填，无全局默认） |
+| `tables` | export_batch；load_batch 无清单时 | **每表一行** `表名 = 时间列`；无需时间范围时留空 |
 
-时间列名为任意 Oracle 标识符（不限集合）。已移除全局 `tmColumn` 与 `files` / `表名|列名` 写法。
+时间列名为任意 Oracle 标识符（不限集合）。`表名 =` 表示不拼时间范围，并在整个
+`start`/`end` 范围内只执行一次，避免每个时间片重复导出整表。已移除全局
+`tmColumn` 与 `files` / `表名|列名` 写法。
 
 多数据来源 Sheet（如 `HVPS_EXTPAYMENT1`）：`tables` 左侧写 **Sheet/sql 文件名**；`.dat`/`.ctl` 文件名同 Sheet；`.ctl` 的 `INTO TABLE` 为物理表名（去末位数字，与生成器 `SheetNames.resolveTableName` / SQL 头 `-- targetTable:` 一致）。
 
@@ -96,6 +99,8 @@ tables =
 
 ```bash
 ./export_by_map.sh <beginTm> <endTm> [tmColumn] [表名]
+# 整表导出（显式空时间列）
+./export_by_map.sh 20240301 20270301 "" IBPS_MOBILEINFO
 ```
 
 ## 4. 单表单窗装载
@@ -138,7 +143,7 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 
 ```bash
 # 编辑 test-job.conf：testSqlDir / testOutDir / connect / tgtConnect / tables
-# tables 单列表示源/目标同名；不同名写：Sheet = 源时间列,目标时间列
+# tables 单列表示源/目标同名；不同名写：Sheet = 源时间列,目标时间列；无需时间范围时留空
 ./test_batch.sh
 ./test_batch.sh 20240315
 ./test_batch.sh 20240315 "IBPS_PAYMENTINIT = TRANSDT,WORKDATE"
@@ -148,6 +153,8 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 
 ```bash
 ./test_by_map.sh <beginTm> <endTm> <srcTmColumn> <tgtTmColumn> <Sheet名>
+# 整表测试（源/目标时间列同时留空）
+./test_by_map.sh 20240301 20270301 "" "" IBPS_MOBILEINFO
 ```
 
 每片产出 `{testOutDir}/{Sheet}_{begin}_{end}/verify.result`（overall=PASS|FAIL）与可选 `verify.diff`。默认只执行 T1 总量和 T2 行明细共 4 次 SQL；T5 重复键、空键、统计和集合检查从 T2 结果派生。配置 `byDayCheck=true` 时额外执行源/目标按日统计。`run.log` 仅记录每条 SQL 的状态、耗时和失败输出。设计见 `docs/excel-to-test-sql-design.md` §6.5。
