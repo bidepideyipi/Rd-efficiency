@@ -14,9 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 按设计文档生成 T1/T2/T5（及条件 T4）成对测试 SQL。
- */
+/** 按设计文档生成 T1/T2（及条件 T4）成对 SQL；T5 由 T2 明细派生。 */
 @Component
 public class TestSqlRenderer {
 
@@ -112,15 +110,6 @@ public class TestSqlRenderer {
                     renderHash(table, primaryAlias, true, srcPkExprs, srcHashExprs));
             bundle.getFiles().put("02_hash_tgt.sql",
                     renderHash(table, TGT_ALIAS, false, tgtPkExprs, tgtHashExprs));
-
-            bundle.getFiles().put("05_pk_dup_src.sql", renderPkDup(table, primaryAlias, true, srcPkExprs));
-            bundle.getFiles().put("05_pk_dup_tgt.sql", renderPkDup(table, TGT_ALIAS, false, tgtPkExprs));
-            bundle.getFiles().put("05_pk_null_src.sql", renderPkNull(table, primaryAlias, true, srcPkExprs));
-            bundle.getFiles().put("05_pk_null_tgt.sql", renderPkNull(table, TGT_ALIAS, false, tgtPkExprs));
-            bundle.getFiles().put("05_pk_stat_src.sql", renderPkStat(table, primaryAlias, true, srcPkExprs));
-            bundle.getFiles().put("05_pk_stat_tgt.sql", renderPkStat(table, TGT_ALIAS, false, tgtPkExprs));
-            bundle.getFiles().put("05_pk_set_src.sql", renderPkSet(table, primaryAlias, true, srcPkExprs));
-            bundle.getFiles().put("05_pk_set_tgt.sql", renderPkSet(table, TGT_ALIAS, false, tgtPkExprs));
         }
 
         return bundle;
@@ -132,7 +121,7 @@ public class TestSqlRenderer {
         appendHeader(sb, table, source ? "T1 count src" : "T1 count tgt", byDay ? "byday" : "total");
         sb.append("SELECT\n");
         if (byDay) {
-            sb.append("  ").append(dayExpr(alias)).append(" || CHR(1) || TO_CHAR(COUNT(*))");
+            sb.append("  ").append(dayExpr(alias, source)).append(" || CHR(1) || TO_CHAR(COUNT(*))");
             if (amountCheck) {
                 sb.append(" || CHR(1) || TO_CHAR(").append(amountSumExpr(source, amountSrcExpr)).append(")");
             }
@@ -146,7 +135,7 @@ public class TestSqlRenderer {
         }
         appendFrom(sb, table, alias, source);
         if (byDay) {
-            sb.append("GROUP BY ").append(dayExpr(alias)).append("\n");
+            sb.append("GROUP BY ").append(dayExpr(alias, source)).append("\n");
             sb.append("ORDER BY 1\n");
         }
         sb.append(";\n");
@@ -160,78 +149,28 @@ public class TestSqlRenderer {
         return "NVL(SUM(" + TGT_ALIAS + ".AMOUNT), 0)";
     }
 
-    private String dayExpr(String alias) {
+    private String dayExpr(String alias, boolean source) {
         // 字符串日期列用 SUBSTR；DATE 列用 TO_CHAR。占位列名运行时替换，两边统一 TO_CHAR 兼容性更好。
+        String placeholder = source ? "{{srcTmColumn}}" : "{{tgtTmColumn}}";
         if ("to_date".equalsIgnoreCase(properties.getTimePredicate())) {
-            return "TO_CHAR(" + alias + ".{{tmColumn}}, 'YYYYMMDD')";
+            return "TO_CHAR(" + alias + "." + placeholder + ", 'YYYYMMDD')";
         }
-        return "SUBSTR(TO_CHAR(" + alias + ".{{tmColumn}}), 1, 8)";
+        return "SUBSTR(TO_CHAR(" + alias + "." + placeholder + "), 1, 8)";
     }
 
     private String renderHash(TableMapping table, String alias, boolean source,
                               List<String> pkExprs, List<String> hashExprs) {
         StringBuilder sb = new StringBuilder();
         appendHeader(sb, table, source ? "T2 hash src" : "T2 hash tgt", "file");
+        sb.append("-- rowFormat: NULL_FLAG<0x01>ROW_MD5<0x01>PK_KEY\n\n");
         String pkKey = concatNorm(pkExprs);
         String rowMd5 = "STANDARD_HASH(" + concatNorm(hashExprs) + ", 'MD5')";
+        String nullFlag = "CASE WHEN " + nullPkPredicate(pkExprs) + " THEN '1' ELSE '0' END";
         sb.append("SELECT\n");
-        sb.append("  (").append(pkKey).append(") || CHR(1) || (").append(rowMd5).append(") AS LINE\n");
+        sb.append("  (").append(nullFlag).append(") || CHR(1) || (")
+                .append(rowMd5).append(") || CHR(1) || (").append(pkKey).append(") AS LINE\n");
         appendFrom(sb, table, alias, source);
-        sb.append("ORDER BY 1\n");
-        sb.append(";\n");
-        return sb.toString();
-    }
-
-    private String renderPkDup(TableMapping table, String alias, boolean source, List<String> pkExprs) {
-        StringBuilder sb = new StringBuilder();
-        appendHeader(sb, table, source ? "T5 pk dup src" : "T5 pk dup tgt", null);
-        sb.append("SELECT\n");
-        sb.append("  (").append(concatNorm(pkExprs)).append(") || CHR(1) || TO_CHAR(COUNT(*)) AS LINE\n");
-        appendFrom(sb, table, alias, source);
-        sb.append("GROUP BY ").append(concatNorm(pkExprs)).append("\n");
-        sb.append("HAVING COUNT(*) > 1\n");
-        sb.append("ORDER BY 1\n");
-        sb.append(";\n");
-        return sb.toString();
-    }
-
-    private String renderPkNull(TableMapping table, String alias, boolean source, List<String> pkExprs) {
-        StringBuilder sb = new StringBuilder();
-        appendHeader(sb, table, source ? "T5 pk null src" : "T5 pk null tgt", null);
-        sb.append("SELECT\n");
-        sb.append("  TO_CHAR(COUNT(*)) AS LINE\n");
-        appendFromWithExtraAnd(sb, table, alias, source, nullPkPredicate(pkExprs));
-        sb.append(";\n");
-        return sb.toString();
-    }
-
-    private String renderPkStat(TableMapping table, String alias, boolean source, List<String> pkExprs) {
-        StringBuilder sb = new StringBuilder();
-        appendHeader(sb, table, source ? "T5 pk stat src" : "T5 pk stat tgt", null);
-        String pkKey = concatNorm(pkExprs);
-        sb.append("SELECT\n");
-        sb.append("  TO_CHAR(COUNT(*)) || CHR(1) || TO_CHAR(COUNT(DISTINCT PK_KEY)) AS LINE\n");
-        sb.append("FROM (\n");
-        sb.append("  SELECT (").append(pkKey).append(") AS PK_KEY\n");
-        String from = buildFromBody(table, alias, source);
-        for (String line : from.split("\n")) {
-            if (line.isEmpty()) {
-                continue;
-            }
-            sb.append("  ").append(line).append("\n");
-        }
-        sb.append(") q\n");
-        sb.append(";\n");
-        return sb.toString();
-    }
-
-    private String renderPkSet(TableMapping table, String alias, boolean source, List<String> pkExprs) {
-        StringBuilder sb = new StringBuilder();
-        appendHeader(sb, table, source ? "T5 pk set src" : "T5 pk set tgt", null);
-        sb.append("SELECT\n");
-        sb.append("  (").append(concatNorm(pkExprs)).append(") AS LINE\n");
-        appendFrom(sb, table, alias, source);
-        sb.append("ORDER BY 1\n");
+        sb.append("ORDER BY ").append(pkKey).append("\n");
         sb.append(";\n");
         return sb.toString();
     }
@@ -276,29 +215,16 @@ public class TestSqlRenderer {
         sb.append(buildFromBody(table, alias, source));
     }
 
-    private void appendFromWithExtraAnd(StringBuilder sb, TableMapping table, String alias,
-                                        boolean source, String extraAnd) {
-        String body = buildFromBody(table, alias, source);
-        if (body.contains("WHERE ")) {
-            // 在末尾换行前插入 AND
-            if (body.endsWith("\n")) {
-                body = body.substring(0, body.length() - 1);
-            }
-            sb.append(body).append("\n  AND (").append(extraAnd).append(")\n");
-        } else {
-            sb.append(body);
-            sb.append("WHERE (").append(extraAnd).append(")\n");
-        }
-    }
-
     private String buildFromBody(TableMapping table, String alias, boolean source) {
         if (source) {
-            return selectSqlRenderer.renderFromWhere(table, alias);
+            return selectSqlRenderer.renderFromWhere(table, alias)
+                    .replace("{{tmColumn}}", "{{srcTmColumn}}");
         }
         StringBuilder sb = new StringBuilder();
         sb.append("FROM ").append(AmountCheckPolicy.physicalTable(table)).append(" ").append(alias).append("\n");
         if (selectSqlRenderer.hasTimeWindow(table)) {
-            sb.append("WHERE ").append(selectSqlRenderer.renderTimePredicate(alias)).append("\n");
+            sb.append("WHERE ").append(selectSqlRenderer.renderTimePredicate(alias)
+                    .replace("{{tmColumn}}", "{{tgtTmColumn}}")).append("\n");
         }
         return sb.toString();
     }

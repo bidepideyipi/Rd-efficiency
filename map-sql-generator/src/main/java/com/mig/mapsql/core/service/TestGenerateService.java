@@ -155,6 +155,7 @@ public class TestGenerateService {
         sb.append("  \"timeWindow\": ").append(b.isTimeWindow()).append(",\n");
         sb.append("  \"pkResolved\": ").append(b.isPkResolved()).append(",\n");
         sb.append("  \"hashMode\": \"file\",\n");
+        sb.append("  \"hashFormat\": \"nullFlag-md5-pk-v2\",\n");
         sb.append("  \"dayBucket\": true,\n");
         sb.append("  \"files\": ").append(jsonStringArray(new ArrayList<String>(b.getFiles().keySet()))).append("\n");
         sb.append("}\n");

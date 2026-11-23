@@ -321,48 +321,22 @@ ORDER BY 1;
 
 **目的：** 唯一性、非空、与源抽取结果集主键集合一致。
 
-#### 4.6.1 目标侧（约束与唯一）
+#### 4.6.1 从 T2 明细派生
 
-```sql
--- 05_pk_tgt.sql 片段 1：重复键
-SELECT pk1, pk2, …, COUNT(*) AS CNT
-FROM {物理目标表} t
-WHERE …时间窗…
-GROUP BY pk1, pk2, …
-HAVING COUNT(*) > 1;
-
--- 片段 2：空键
-SELECT COUNT(*) AS NULL_PK_CNT
-FROM {物理目标表} t
-WHERE …时间窗…
-  AND ( pk1 IS NULL OR TRIM(TO_CHAR(pk1)) IS NULL
-     OR … );
-
--- 片段 3：总数 vs 去重数
-SELECT COUNT(*) AS CNT,
-       COUNT(DISTINCT pk_key) AS DIST_CNT
-FROM ( SELECT norm(pk1)||CHR(0)||… AS pk_key FROM … );
-```
-
-Pass：`片段1` 无行；`NULL_PK_CNT=0`；`CNT=DIST_CNT`。
-
-这与「按主键 GROUP，每个 group 仅一条，且总行数与去重行数相同」等价。
-
-#### 4.6.2 源侧（抽取结果集唯一）
-
-对 map 主键表达式做同样的 `GROUP BY … HAVING COUNT(*)>1` 与 `CNT vs DIST_CNT`。  
-用于发现：JOIN 放大导致源结果集主键重复（装载前即坏）。
-
-#### 4.6.3 跨库主键集合
-
-导出有序主键清单：
+不再为 T5 单独查询数据库。T2 每行输出：
 
 ```text
-pk_key
+null_flag 0x01 row_md5 0x01 pk_key
 ```
 
-源集合文件 vs 目标集合文件：`cmp` 或差集。  
-与 T1 互补：能发现「COUNT 相同但主键集合不同」（错迁/串键）。
+SQL 按 `pk_key` 排序；脚本删除前两段后生成两端有序 `.keys` 文件，并在一次顺序扫描中得到：
+
+- 相邻重复 PK 组数；
+- `null_flag=1` 的行数；
+- 总行数与不同 PK 数；
+- 源、目标 PK 集合差异。
+
+Pass：两端均无重复和空键；各自总数等于不同 PK 数；两端行数与 T1 总数一致；`.keys` 文件相同。这样保留原 T5 的完整门禁语义，同时省去 8 次 SQL 执行。
 
 ---
 
@@ -376,8 +350,6 @@ pk_key
       01_count_tgt.sql
       02_hash_src.sql
       02_hash_tgt.sql
-      05_pk_src.sql
-      05_pk_tgt.sql
       _meta.json
     _runner/                   # 实现阶段落入 scripts/；设计期约定行为
       test-job.conf            # 可复用/扩展 export-job.conf
@@ -431,10 +403,11 @@ start = 20240301
 end = 20270301
 interval = 1m
 onError = stop
+byDayCheck = false
 
 tables =
   IBPS_PAYMENTINIT = TRANDATE
-  HVPS_PAYMENTINIT = WORKDATE
+  HVPS_PAYMENTINIT = TRANSDT,WORKDATE
 ```
 
 | 键 | 说明 |
@@ -442,16 +415,18 @@ tables =
 | `testSqlDir` | 测试 SQL 根目录（含各 `{Sheet}/`） |
 | `testOutDir` | 结果与差异报告目录 |
 | `connect` / `tgtConnect` | 源 / 目标 sqlplus 连接（目标侧用 sqlplus 查数，不用 sqlldr） |
-| `tables` | `Sheet名 = 时间列`（与导出相同；多源 Sheet 写带编号名） |
+| `tables` | `Sheet名 = 源时间列[,目标时间列]`；单列表示两端同名 |
+| `byDayCheck` | 默认 `false`；需要定位每日差异时才执行 T1 按日查询 |
 
 ### 6.3 单表单窗流程（`test_by_map.sh`）
 
 ```text
-1. 校验参数 beginTm / endTm / tmColumn / Sheet
+1. 校验参数 beginTm / endTm / srcTmColumn / tgtTmColumn / Sheet
 2. sed 替换各 *_src.sql → 临时 SQL → sqlplus connect → SPOOL *.src.dat
 3. sed 替换各 *_tgt.sql → sqlplus tgtConnect → SPOOL *.tgt.dat
-4. 按 §6.5 读取 .dat、逐项比对、写 verify.result / verify.diff
-5. 退出码：PASS=0 / FAIL=1 / 基础设施错误=2；batch 的 onError=stop 遇非 0 即停
+4. 比对 T1/T2，并从 T2 明细派生 T5 重复键、空键、统计和集合检查
+5. 写 verify.result / verify.diff
+6. 退出码：PASS=0 / FAIL=1 / 基础设施错误=2；batch 的 onError=stop 遇非 0 即停
 ```
 
 细节（SPOOL 格式、分列、各检查比对算法、报告字段）见 **§6.5**。
@@ -491,17 +466,11 @@ SPOOL OFF
   01_count_byday.tgt.dat
   02_hash.src.dat
   02_hash.tgt.dat
-  05_pk_dup.src.dat
-  05_pk_dup.tgt.dat
-  05_pk_null.src.dat
-  05_pk_null.tgt.dat
-  05_pk_stat.src.dat
-  05_pk_stat.tgt.dat
-  05_pk_set.src.dat
-  05_pk_set.tgt.dat
+  02_hash.src.keys       # 从明细派生，不访问数据库
+  02_hash.tgt.keys
   verify.result          # 本片总判定
   verify.diff            # 失败时的差异明细（可追加多段）
-  run.log                # sqlplus 退出码与耗时
+  run.log                # SQL 状态/耗时；仅失败时附 sqlplus 输出
 ```
 
 空结果集：SPOOL 文件存在且长度为 0（或仅换行）视为「0 行」，对 T5 重复键检查是 **Pass**；对 T1 片合计若两侧皆空则 CNT=0 仍可比。
@@ -512,11 +481,11 @@ SPOOL OFF
 |------|-----------------------------------|----------|------------------|
 | T1 片合计 | `CNT` 或 `CNT 0x01 AMT_SUM` | 读首条非空行，按 `0x01` split；缺列按 `_meta.amountCheck` 判定是否必填 | `src.CNT == tgt.CNT`；若 `amountCheck` 则再比 `AMT_SUM`（数值按十进制字符串规范化后再比，去尾随无用 0） |
 | T1 按日 | `DT 0x01 CNT` 或 `DT 0x01 CNT 0x01 AMT_SUM` | 载入为 `Map<DT, (CNT,AMT)>`（Shell：`awk -F $'\x01'`） | 以 DT 做外连接：仅一侧有日、或 CNT/AMT 不等 → Fail；两侧 DT 集合与值全等 → Pass |
-| T2 行指纹 | `pk_key 0x01 row_md5`（已 `ORDER BY pk_key`） | 不解析业务语义；整文件字节级或按行对齐 | **首选** `cmp -s src tgt`（全等即 Pass）。Fail 时再 `diff` / `awk` 按 `pk_key` 对齐，写出：仅源有 / 仅目标有 / md5 不同（各最多截断前 N 行，默认 N=50，写入 `verify.diff`） |
-| T5 重复键 | `pk… 0x01 CNT`（HAVING 结果） | 统计非空行数 | 源文件与目标文件均须 **0 行** |
-| T5 空键 | `NULL_PK_CNT` | 读首行整数 | 源、目标均 `== 0` |
-| T5 统计 | `CNT 0x01 DIST_CNT` | split 两列 | 各自 `CNT == DIST_CNT`；再要求 `src.CNT == tgt.CNT`（与 T1 交叉校验，不一致记 WARN 或 Fail，V1 记 **Fail**） |
-| T5 PK 集合 | 每行一个 `pk_key`（已排序） | 同 T2 | `cmp -s`；Fail 时差集写入 `verify.diff` |
+| T2 行指纹 | `null_flag 0x01 row_md5 0x01 pk_key`（按 `pk_key` 排序） | 整文件字节级比对 | `cmp -s src tgt`；Fail 时将截断后的 `diff` 写入 `verify.diff` |
+| T5 重复键 | 不执行 SQL | 顺序扫描 T2 派生的 `.keys` | 两端均无相邻重复 PK |
+| T5 空键 | 不执行 SQL | 统计 T2 的 `null_flag=1` | 源、目标均 `== 0` |
+| T5 统计 | 不执行 SQL | 统计 T2 行数和不同 PK 数 | 各自 `CNT == DIST_CNT`，两端 CNT 相等，并与 T1 交叉校验 |
+| T5 PK 集合 | 不执行 SQL | 从 T2 去掉 flag/hash 得到 `.keys` | `cmp -s`；Fail 时差集写入 `verify.diff` |
 
 **实现载体：** V1 以 Shell + `awk`/`cmp`/`diff` 为主（跳板机无额外依赖）；若结果极大，T2/T5 集合比对可改为对两侧文件分别 `md5sum` 先做快速否决，不等再跑行级 diff。
 
@@ -529,7 +498,8 @@ SPOOL OFF
 sheet=IBPS_PAYMENTINIT
 beginTm=20240301
 endTm=20240401
-tmColumn=TRANDATE
+srcTmColumn=TRANSDT
+tgtTmColumn=TRANDATE
 amountCheck=true
 overall=FAIL
 

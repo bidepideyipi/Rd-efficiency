@@ -134,22 +134,23 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 
 ## 6. 迁移结果测试（Excel → 测试 SQL）
 
-先在 Web「Excel → 测试 SQL」生成 `{testSqlDir}/{Sheet}/01_count_*`、`02_hash_*`、`05_pk_*`，再在跳板机执行：
+先在 Web「Excel → 测试 SQL」生成 `{testSqlDir}/{Sheet}/01_count_*`、`02_hash_*`，再在跳板机执行：
 
 ```bash
 # 编辑 test-job.conf：testSqlDir / testOutDir / connect / tgtConnect / tables
+# tables 单列表示源/目标同名；不同名写：Sheet = 源时间列,目标时间列
 ./test_batch.sh
 ./test_batch.sh 20240315
-./test_batch.sh 20240315 "IBPS_PAYMENTINIT = TRANDATE"
+./test_batch.sh 20240315 "IBPS_PAYMENTINIT = TRANSDT,WORKDATE"
 ```
 
 单表单窗：
 
 ```bash
-./test_by_map.sh <beginTm> <endTm> <tmColumn> <Sheet名>
+./test_by_map.sh <beginTm> <endTm> <srcTmColumn> <tgtTmColumn> <Sheet名>
 ```
 
-每片产出 `{testOutDir}/{Sheet}_{begin}_{end}/verify.result`（overall=PASS|FAIL）与可选 `verify.diff`。设计见 `docs/excel-to-test-sql-design.md` §6.5。
+每片产出 `{testOutDir}/{Sheet}_{begin}_{end}/verify.result`（overall=PASS|FAIL）与可选 `verify.diff`。默认只执行 T1 总量和 T2 行明细共 4 次 SQL；T5 重复键、空键、统计和集合检查从 T2 结果派生。配置 `byDayCheck=true` 时额外执行源/目标按日统计。`run.log` 仅记录每条 SQL 的状态、耗时和失败输出。设计见 `docs/excel-to-test-sql-design.md` §6.5。
 
 ## 7. 占位符与文件约定
 
@@ -157,7 +158,9 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 |--------|--------|
 | `{{beginTm}}` | 本片开始（含） |
 | `{{endTm}}` | 本片结束（不含） |
-| `{{tmColumn}}` | 时间列名 |
+| `{{srcTmColumn}}` | 源库时间列名（测试 SQL） |
+| `{{tgtTmColumn}}` | 目标库时间列名（测试 SQL） |
+| `{{tmColumn}}` | 旧测试 SQL兼容占位符；按执行端替换 |
 
 | 项 | 约定 |
 |----|------|

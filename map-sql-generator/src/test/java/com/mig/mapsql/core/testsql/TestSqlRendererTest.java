@@ -39,22 +39,25 @@ class TestSqlRendererTest {
         assertTrue(bundle.isPkResolved());
         assertTrue(bundle.getFiles().containsKey("01_count_total_src.sql"));
         assertTrue(bundle.getFiles().containsKey("02_hash_src.sql"));
-        assertTrue(bundle.getFiles().containsKey("05_pk_set_tgt.sql"));
+        assertFalse(bundle.getFiles().containsKey("05_pk_set_tgt.sql"));
 
         String countSrc = bundle.getFiles().get("01_count_total_src.sql");
         assertTrue(countSrc.contains("COUNT(*)"));
         assertTrue(countSrc.contains("SUM(("));
         assertTrue(countSrc.contains("TO_NUMBER(TRIM(s.AMOUNT))"));
         assertTrue(countSrc.contains("{{beginTm}}"));
+        assertTrue(countSrc.contains("s.{{srcTmColumn}}"));
         assertTrue(countSrc.contains("A10TIBPSDETAILLOG"));
 
         String countTgt = bundle.getFiles().get("01_count_total_tgt.sql");
         assertTrue(countTgt.contains("FROM IBPS_PAYMENTINIT t"));
         assertTrue(countTgt.contains("SUM(t.AMOUNT)"));
+        assertTrue(countTgt.contains("t.{{tgtTmColumn}}"));
         assertFalse(countTgt.contains("FUNCTION2 IN"));
 
         String hashSrc = bundle.getFiles().get("02_hash_src.sql");
         assertTrue(hashSrc.contains("STANDARD_HASH"));
+        assertTrue(hashSrc.contains("CASE WHEN"));
         assertTrue(hashSrc.contains("s.TRACE"));
         assertFalse(hashSrc.contains("WORKDATE"));
 

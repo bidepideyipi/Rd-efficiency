@@ -303,7 +303,7 @@
 
     <section id="panel-testsql" class="panel">
       <h1>测试用例SQL映射 <span class="pill">源库与目标库对照</span></h1>
-      <p class="sub">同一份映射 Excel，生成 T1 记录数、T2 字段 MD5、T4 金额 SUM（条件触发）、T5 主键校验的成对 SQL；输出到导出目录下的 <code>test/{Sheet}/</code>，由跳板机脚本按时间片比对。</p>
+      <p class="sub">同一份映射 Excel，生成 T1 记录数、T2 字段 MD5、T4 金额 SUM（条件触发）的成对 SQL；T5 主键校验由 T2 明细派生，不再重复查询数据库。输出到 <code>test/{Sheet}/</code>，由跳板机脚本按时间片比对。</p>
 
       <section class="card">
         <label>输出根目录（将写入其下 test/）</label>

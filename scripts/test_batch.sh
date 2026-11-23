@@ -3,7 +3,7 @@
 # 用法：
 #   ./test_batch.sh
 #   ./test_batch.sh yyyyMMdd
-#   ./test_batch.sh yyyyMMdd "tableName = tmColumn"
+#   ./test_batch.sh yyyyMMdd "tableName = srcTmColumn[,tgtTmColumn]"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +22,7 @@ if [[ ! -f "${ONE_SHOT}" ]]; then
   exit 1
 fi
 if [[ -n "${ONE_TABLE_SPEC}" && -z "${ONE_DAY}" ]]; then
-  echo "usage: $0 [yyyyMMdd [\"tableName = tmColumn\"]]" >&2
+  echo "usage: $0 [yyyyMMdd [\"tableName = srcTmColumn[,tgtTmColumn]\"]]" >&2
   exit 1
 fi
 
@@ -30,7 +30,7 @@ trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 
 check_column() {
   if [[ ! "$1" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
-    echo "invalid tmColumn: $1 (need Oracle identifier)" >&2
+    echo "invalid time column: $1 (need Oracle identifier)" >&2
     exit 1
   fi
 }
@@ -42,25 +42,34 @@ ON_ERROR="stop"
 TEST_OUT_DIR=""
 TABLES_SET=0
 RESOLVED_TABLES=()
-RESOLVED_COLUMNS=()
+RESOLVED_SRC_COLUMNS=()
+RESOLVED_TGT_COLUMNS=()
 
 add_table_mapping() {
-  local table="$1"
-  local col="$2"
+  local table="$1" columns="$2" src_col tgt_col
   table="$(trim "${table}")"
-  col="$(trim "${col}")"
+  columns="$(trim "${columns}")"
   table="${table%.sql}"
   if [[ -z "${table}" || "${table}" == */* || "${table}" == *..* ]]; then
     echo "invalid table name: ${table}" >&2
     exit 1
   fi
-  if [[ -z "${col}" ]]; then
-    echo "tmColumn required for table: ${table}" >&2
+  if [[ -z "${columns}" ]]; then
+    echo "time column required for table: ${table}" >&2
     exit 1
   fi
-  check_column "${col}"
+  if [[ "${columns}" == *,* ]]; then
+    src_col="$(trim "${columns%%,*}")"
+    tgt_col="$(trim "${columns#*,}")"
+  else
+    src_col="${columns}"
+    tgt_col="${columns}"
+  fi
+  check_column "${src_col}"
+  check_column "${tgt_col}"
   RESOLVED_TABLES+=("${table}")
-  RESOLVED_COLUMNS+=("${col}")
+  RESOLVED_SRC_COLUMNS+=("${src_col}")
+  RESOLVED_TGT_COLUMNS+=("${tgt_col}")
 }
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
@@ -74,7 +83,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
   val="$(trim "${line#*=}")"
 
   case "${key}" in
-    testSqlDir|connect|tgtConnect|maxDiffLines)
+    testSqlDir|connect|tgtConnect|maxDiffLines|byDayCheck)
       TABLES_SET=0
       ;;
     testOutDir) TEST_OUT_DIR="${val}"; TABLES_SET=0 ;;
@@ -138,11 +147,12 @@ add_months() {
 
 if [[ -n "${ONE_TABLE_SPEC}" ]]; then
   if [[ "${ONE_TABLE_SPEC}" != *=* ]]; then
-    echo "invalid table spec: ${ONE_TABLE_SPEC} (want: tableName = tmColumn)" >&2
+    echo "invalid table spec: ${ONE_TABLE_SPEC} (want: tableName = srcTmColumn[,tgtTmColumn])" >&2
     exit 1
   fi
   RESOLVED_TABLES=()
-  RESOLVED_COLUMNS=()
+  RESOLVED_SRC_COLUMNS=()
+  RESOLVED_TGT_COLUMNS=()
   add_table_mapping "${ONE_TABLE_SPEC%%=*}" "${ONE_TABLE_SPEC#*=}"
 fi
 
@@ -196,12 +206,13 @@ printf 'sheet\tbegin\tend\toutcome\texit\n' > "${SUMMARY}"
 BATCH_RC=0
 for i in "${!RESOLVED_TABLES[@]}"; do
   TABLE="${RESOLVED_TABLES[$i]}"
-  COL="${RESOLVED_COLUMNS[$i]}"
+  SRC_COL="${RESOLVED_SRC_COLUMNS[$i]}"
+  TGT_COL="${RESOLVED_TGT_COLUMNS[$i]}"
   for j in "${!SLICES_BEGIN[@]}"; do
     B="${SLICES_BEGIN[$j]}"
     E="${SLICES_END[$j]}"
     set +e
-    "${ONE_SHOT}" "${B}" "${E}" "${COL}" "${TABLE}"
+    "${ONE_SHOT}" "${B}" "${E}" "${SRC_COL}" "${TGT_COL}" "${TABLE}"
     RC=$?
     set -e
     OUTCOME=PASS

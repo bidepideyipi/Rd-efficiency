@@ -1,15 +1,28 @@
 #!/bin/bash
 # 单表单时间窗：执行 test/{Sheet} 下成对 SQL，比对源/目标结果，写 verify.result。
-# 用法：./test_by_map.sh <beginTm> <endTm> <tmColumn> <Sheet名>
+# 用法：
+#   ./test_by_map.sh <beginTm> <endTm> <srcTmColumn> <tgtTmColumn> <Sheet名>
+# 兼容旧用法：./test_by_map.sh <beginTm> <endTm> <tmColumn> <Sheet名>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${SCRIPT_DIR}/test-job.conf"
 
-BEGIN_TM="${1:?beginTm required}"
-END_TM="${2:?endTm required}"
-TM_COLUMN="${3:?tmColumn required}"
-TABLE_NAME="${4:?sheet/table name required}"
+if [[ "$#" -ne 4 && "$#" -ne 5 ]]; then
+  echo "usage: $0 <beginTm> <endTm> <srcTmColumn> [tgtTmColumn] <Sheet>" >&2
+  exit 2
+fi
+
+BEGIN_TM="$1"
+END_TM="$2"
+SRC_TM_COLUMN="$3"
+if [[ "$#" -eq 5 ]]; then
+  TGT_TM_COLUMN="$4"
+  TABLE_NAME="$5"
+else
+  TGT_TM_COLUMN="$3"
+  TABLE_NAME="$4"
+fi
 TABLE_NAME="${TABLE_NAME%.sql}"
 
 if [[ ! -f "${CONF}" ]]; then
@@ -24,6 +37,7 @@ TEST_OUT_DIR=""
 CONNECT=""
 TGT_CONNECT=""
 MAX_DIFF_LINES=50
+BY_DAY_CHECK=false
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
   line="$(trim "${raw}")"
@@ -37,6 +51,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     connect) CONNECT="${val}" ;;
     tgtConnect) TGT_CONNECT="${val}" ;;
     maxDiffLines) MAX_DIFF_LINES="${val}" ;;
+    byDayCheck) BY_DAY_CHECK="${val}" ;;
     tables) break ;;
   esac
 done < "${CONF}"
@@ -45,8 +60,14 @@ if [[ -z "${TEST_SQL_DIR}" || -z "${TEST_OUT_DIR}" || -z "${CONNECT}" || -z "${T
   echo "testSqlDir/testOutDir/connect/tgtConnect required in ${CONF}" >&2
   exit 2
 fi
-if [[ ! "${TM_COLUMN}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
-  echo "invalid tmColumn: ${TM_COLUMN}" >&2
+for column in "${SRC_TM_COLUMN}" "${TGT_TM_COLUMN}"; do
+  if [[ ! "${column}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+    echo "invalid time column: ${column}" >&2
+    exit 2
+  fi
+done
+if [[ "${BY_DAY_CHECK}" != true && "${BY_DAY_CHECK}" != false ]]; then
+  echo "invalid byDayCheck: ${BY_DAY_CHECK} (true|false)" >&2
   exit 2
 fi
 
@@ -72,14 +93,23 @@ fi
 run_sql() {
   local side="$1" sql_file="$2" out_dat="$3"
   local connect="${CONNECT}"
-  [[ "${side}" == "tgt" ]] && connect="${TGT_CONNECT}"
-  local run_sql
+  local side_column="${SRC_TM_COLUMN}"
+  if [[ "${side}" == "tgt" ]]; then
+    connect="${TGT_CONNECT}"
+    side_column="${TGT_TM_COLUMN}"
+  fi
+  local run_sql tmp_log started elapsed rc
   run_sql="${SLICE_DIR}/_run_${side}_$(basename "${sql_file}")"
   sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
       -e "s/{{endTm}}/${END_TM}/g" \
-      -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
+      -e "s/{{srcTmColumn}}/${SRC_TM_COLUMN}/g" \
+      -e "s/{{tgtTmColumn}}/${TGT_TM_COLUMN}/g" \
+      -e "s/{{tmColumn}}/${side_column}/g" \
       "${sql_file}" > "${run_sql}"
-  if ! sqlplus -s "${connect}" <<EOF >"${RUN_LOG}.tmp" 2>&1
+  tmp_log="${RUN_LOG}.tmp"
+  rm -f "${tmp_log}" "${out_dat}"
+  started="$(date +%s)"
+  if sqlplus -s "${connect}" <<EOF >"${tmp_log}" 2>&1
 SET ECHO OFF
 SET FEEDBACK OFF
 SET HEADING OFF
@@ -87,6 +117,7 @@ SET PAGESIZE 0
 SET LINESIZE 32767
 SET TRIMSPOOL ON
 SET TRIMOUT ON
+SET TERMOUT OFF
 SET COLSEP ''
 WHENEVER OSERROR EXIT FAILURE
 WHENEVER SQLERROR EXIT SQL.SQLCODE
@@ -96,11 +127,22 @@ SPOOL OFF
 EXIT
 EOF
   then
-    cat "${RUN_LOG}.tmp" >> "${RUN_LOG}"
-    echo "sqlplus failed: ${side} ${sql_file}" >&2
+    elapsed=$(( $(date +%s) - started ))
+    printf 'side=%s sql=%s status=PASS elapsed=%ss\n' \
+      "${side}" "$(basename "${sql_file}")" "${elapsed}" >> "${RUN_LOG}"
+    rm -f "${tmp_log}"
+  else
+    rc=$?
+    elapsed=$(( $(date +%s) - started ))
+    printf 'side=%s sql=%s status=ERROR exit=%s elapsed=%ss\n' \
+      "${side}" "$(basename "${sql_file}")" "${rc}" "${elapsed}" >> "${RUN_LOG}"
+    if [[ -s "${tmp_log}" ]]; then
+      cat "${tmp_log}" >> "${RUN_LOG}"
+    fi
+    rm -f "${tmp_log}" "${out_dat}"
+    echo "sqlplus failed: ${side} $(basename "${sql_file}") (see ${RUN_LOG})" >&2
     return 2
   fi
-  cat "${RUN_LOG}.tmp" >> "${RUN_LOG}" || true
   # 去掉空行
   if [[ -f "${out_dat}" ]]; then
     grep -v '^[[:space:]]*$' "${out_dat}" > "${out_dat}.n" || true
@@ -125,11 +167,20 @@ pair_run() {
 
 OVERALL=PASS
 EXIT_CODE=0
+INFRA_ERROR=false
 declare -a LINES=()
 
 fail() {
   OVERALL=FAIL
-  EXIT_CODE=1
+  if [[ "${EXIT_CODE}" -eq 0 ]]; then
+    EXIT_CODE=1
+  fi
+}
+
+infrastructure_error() {
+  OVERALL=FAIL
+  EXIT_CODE=2
+  INFRA_ERROR=true
 }
 
 append_diff() {
@@ -145,6 +196,52 @@ append_diff() {
     fi
     echo "${row}" >> "${DIFF}"
   done
+}
+
+append_file_diff() {
+  local section="$1" src="$2" tgt="$3"
+  local rows=()
+  while IFS= read -r row; do
+    rows+=("${row}")
+  done < <(diff -u "${src}" "${tgt}" | head -n "${MAX_DIFF_LINES}" || true)
+  append_diff "${section}" "${rows[@]}"
+}
+
+# 02_hash 每行：NULL_FLAG<0x01>ROW_MD5<0x01>PK_KEY。
+# PK_KEY 已由 SQL 按序输出，因此可在本地一次扫描派生 T5，无需额外查询数据库。
+derive_keys() {
+  local input_file="$1" output_file="$2"
+  awk '{
+    line=$0
+    sub(/^[^\001]*\001/, "", line)
+    sub(/^[^\001]*\001/, "", line)
+    print line
+  }' "${input_file}" > "${output_file}"
+}
+
+count_null_keys() {
+  awk -F "$(printf '\001')" '$1 == "1" { n++ } END { print n + 0 }' "$1"
+}
+
+count_duplicate_groups() {
+  awk '
+    NR == 1 { previous=$0; next }
+    $0 == previous {
+      if (!in_duplicate) { duplicate_groups++ }
+      in_duplicate=1
+      next
+    }
+    { previous=$0; in_duplicate=0 }
+    END { print duplicate_groups + 0 }
+  ' "$1"
+}
+
+count_distinct_keys() {
+  awk '
+    NR == 1 { distinct=1; previous=$0; next }
+    $0 != previous { distinct++; previous=$0 }
+    END { print distinct + 0 }
+  ' "$1"
 }
 
 # --- T1 total ---
@@ -178,32 +275,34 @@ if pair_run 01_count_total; then
     LINES+=("T1_total=${T1_TOTAL} cnt_src=${SRC_CNT} cnt_tgt=${TGT_CNT}")
   fi
 else
-  EXIT_CODE=2
-  OVERALL=FAIL
+  infrastructure_error
   LINES+=("T1_total=ERROR")
 fi
 
 # --- T1 byday ---
 T1_BYDAY=SKIP
-if [[ -f "${SHEET_DIR}/01_count_byday_src.sql" \
-      || -f "${SHEET_DIR}/01_count_byday_tgt.sql" ]]; then
+if [[ "${INFRA_ERROR}" == true ]]; then
+  LINES+=("T1_byday=SKIP reason=prior_error")
+elif [[ "${BY_DAY_CHECK}" != true ]]; then
+  LINES+=("T1_byday=SKIP reason=disabled")
+elif [[ -f "${SHEET_DIR}/01_count_byday_src.sql" \
+        || -f "${SHEET_DIR}/01_count_byday_tgt.sql" ]]; then
   if pair_run 01_count_byday; then
-    # 简化：整文件 cmp；失败再列前几行
     if cmp -s "${SLICE_DIR}/01_count_byday.src.dat" "${SLICE_DIR}/01_count_byday.tgt.dat"; then
       T1_BYDAY=PASS
     else
       T1_BYDAY=FAIL
       fail
-      _diff_rows=()
-      while IFS= read -r _r; do _diff_rows+=("${_r}"); done < <(diff -u "${SLICE_DIR}/01_count_byday.src.dat" "${SLICE_DIR}/01_count_byday.tgt.dat" | head -n "${MAX_DIFF_LINES}" || true)
-      append_diff T1_byday "${_diff_rows[@]}"
+      append_file_diff T1_byday \
+        "${SLICE_DIR}/01_count_byday.src.dat" "${SLICE_DIR}/01_count_byday.tgt.dat"
     fi
     LINES+=("T1_byday=${T1_BYDAY}")
   else
-    EXIT_CODE=2
-    OVERALL=FAIL
+    infrastructure_error
     LINES+=("T1_byday=ERROR")
   fi
+else
+  LINES+=("T1_byday=SKIP reason=not_generated")
 fi
 
 # T4 bundled
@@ -220,127 +319,114 @@ else
 fi
 
 # --- T2 ---
-if [[ -f "${SHEET_DIR}/02_hash_src.sql" \
-      || -f "${SHEET_DIR}/02_hash_tgt.sql" ]]; then
-  if pair_run 02_hash; then
+if [[ "${INFRA_ERROR}" == true ]]; then
+  LINES+=("T2_hash=SKIP reason=prior_error")
+  LINES+=("T3_derived=SKIP")
+  LINES+=("T5_dup=SKIP reason=prior_error")
+  LINES+=("T5_null=SKIP reason=prior_error")
+  LINES+=("T5_stat=SKIP reason=prior_error")
+  LINES+=("T5_set=SKIP reason=prior_error")
+elif [[ -f "${SHEET_DIR}/02_hash_src.sql" \
+        || -f "${SHEET_DIR}/02_hash_tgt.sql" ]]; then
+  if [[ ! -f "${SHEET_DIR}/02_hash_src.sql" \
+        || ! -f "${SHEET_DIR}/02_hash_tgt.sql" ]] \
+      || ! grep -q 'rowFormat: NULL_FLAG' "${SHEET_DIR}/02_hash_src.sql" \
+      || ! grep -q 'rowFormat: NULL_FLAG' "${SHEET_DIR}/02_hash_tgt.sql"; then
+    echo "outdated 02_hash SQL format for ${TABLE_NAME}; regenerate test SQL" >&2
+    infrastructure_error
+    LINES+=("T2_hash=ERROR reason=outdated_sql")
+    LINES+=("T3_derived=SKIP")
+    LINES+=("T5_dup=SKIP reason=hash_error")
+    LINES+=("T5_null=SKIP reason=hash_error")
+    LINES+=("T5_stat=SKIP reason=hash_error")
+    LINES+=("T5_set=SKIP reason=hash_error")
+  elif pair_run 02_hash; then
+    SRC_HASH="${SLICE_DIR}/02_hash.src.dat"
+    TGT_HASH="${SLICE_DIR}/02_hash.tgt.dat"
+    SRC_KEYS="${SLICE_DIR}/02_hash.src.keys"
+    TGT_KEYS="${SLICE_DIR}/02_hash.tgt.keys"
+    derive_keys "${SRC_HASH}" "${SRC_KEYS}"
+    derive_keys "${TGT_HASH}" "${TGT_KEYS}"
+
     if cmp -s "${SLICE_DIR}/02_hash.src.dat" "${SLICE_DIR}/02_hash.tgt.dat"; then
       LINES+=("T2_hash=PASS")
       LINES+=("T3_derived=PASS reason=T2_PASS")
     else
       fail
-      _diff_rows=()
-      while IFS= read -r _r; do _diff_rows+=("${_r}"); done < <(diff -u "${SLICE_DIR}/02_hash.src.dat" "${SLICE_DIR}/02_hash.tgt.dat" | head -n "${MAX_DIFF_LINES}" || true)
-      append_diff T2_hash "${_diff_rows[@]}"
+      append_file_diff T2_hash "${SRC_HASH}" "${TGT_HASH}"
       LINES+=("T2_hash=FAIL")
       LINES+=("T3_derived=SKIP")
     fi
-  else
-    EXIT_CODE=2
-    OVERALL=FAIL
-    LINES+=("T2_hash=ERROR")
-    LINES+=("T3_derived=SKIP")
-  fi
-else
-  LINES+=("T2_hash=SKIP")
-  LINES+=("T3_derived=SKIP")
-fi
 
-# --- T5 ---
-check_empty_dup() {
-  local base="$1" label="$2"
-  if [[ ! -f "${SHEET_DIR}/${base}_src.sql" \
-        && ! -f "${SHEET_DIR}/${base}_tgt.sql" ]]; then
-    LINES+=("${label}=SKIP")
-    return 0
-  fi
-  if ! pair_run "${base}"; then
-    EXIT_CODE=2
-    OVERALL=FAIL
-    LINES+=("${label}=ERROR")
-    return 0
-  fi
-  local sc tc
-  sc="$(wc -l < "${SLICE_DIR}/${base}.src.dat" | tr -d ' ')"
-  tc="$(wc -l < "${SLICE_DIR}/${base}.tgt.dat" | tr -d ' ')"
-  if [[ "${sc}" == 0 && "${tc}" == 0 ]]; then
-    LINES+=("${label}=PASS")
-  else
-    fail
-    LINES+=("${label}=FAIL src_rows=${sc} tgt_rows=${tc}")
-    append_diff "${label}" "src_rows=${sc} tgt_rows=${tc}"
-  fi
-}
-
-check_empty_dup 05_pk_dup T5_dup
-
-if [[ -f "${SHEET_DIR}/05_pk_null_src.sql" \
-      || -f "${SHEET_DIR}/05_pk_null_tgt.sql" ]]; then
-  if pair_run 05_pk_null; then
-    SN="$(head -n1 "${SLICE_DIR}/05_pk_null.src.dat" 2>/dev/null || echo 0)"
-    TN="$(head -n1 "${SLICE_DIR}/05_pk_null.tgt.dat" 2>/dev/null || echo 0)"
-    [[ -z "${SN}" ]] && SN=0
-    [[ -z "${TN}" ]] && TN=0
-    if [[ "${SN}" == 0 && "${TN}" == 0 ]]; then
+    SRC_NULL="$(count_null_keys "${SRC_HASH}")"
+    TGT_NULL="$(count_null_keys "${TGT_HASH}")"
+    if [[ "${SRC_NULL}" == 0 && "${TGT_NULL}" == 0 ]]; then
       LINES+=("T5_null=PASS")
     else
       fail
-      LINES+=("T5_null=FAIL src=${SN} tgt=${TN}")
-      append_diff T5_null "null_pk_cnt src=${SN} tgt=${TN}"
+      LINES+=("T5_null=FAIL src=${SRC_NULL} tgt=${TGT_NULL}")
+      append_diff T5_null "null_pk_cnt src=${SRC_NULL} tgt=${TGT_NULL}"
     fi
-  else
-    EXIT_CODE=2
-    OVERALL=FAIL
-    LINES+=("T5_null=ERROR")
-  fi
-fi
 
-if [[ -f "${SHEET_DIR}/05_pk_stat_src.sql" \
-      || -f "${SHEET_DIR}/05_pk_stat_tgt.sql" ]]; then
-  if pair_run 05_pk_stat; then
-    SS="$(head -n1 "${SLICE_DIR}/05_pk_stat.src.dat" || true)"
-    TS="$(head -n1 "${SLICE_DIR}/05_pk_stat.tgt.dat" || true)"
-    SC="${SS%%$'\x01'*}"
-    SD="${SS#*$'\x01'}"
-    TC="${TS%%$'\x01'*}"
-    TD="${TS#*$'\x01'}"
-    if [[ "${SC}" == "${SD}" && "${TC}" == "${TD}" && "${SC}" == "${TC}" ]]; then
-      LINES+=("T5_stat=PASS cnt=${SC} dist=${SD}")
+    SRC_DUP="$(count_duplicate_groups "${SRC_KEYS}")"
+    TGT_DUP="$(count_duplicate_groups "${TGT_KEYS}")"
+    if [[ "${SRC_DUP}" == 0 && "${TGT_DUP}" == 0 ]]; then
+      LINES+=("T5_dup=PASS")
     else
       fail
-      LINES+=("T5_stat=FAIL src=${SS} tgt=${TS}")
-      append_diff T5_stat "src=${SS} tgt=${TS}"
+      LINES+=("T5_dup=FAIL src_groups=${SRC_DUP} tgt_groups=${TGT_DUP}")
+      append_diff T5_dup "duplicate_groups src=${SRC_DUP} tgt=${TGT_DUP}"
     fi
-  else
-    EXIT_CODE=2
-    OVERALL=FAIL
-    LINES+=("T5_stat=ERROR")
-  fi
-fi
 
-if [[ -f "${SHEET_DIR}/05_pk_set_src.sql" \
-      || -f "${SHEET_DIR}/05_pk_set_tgt.sql" ]]; then
-  if pair_run 05_pk_set; then
-    if cmp -s "${SLICE_DIR}/05_pk_set.src.dat" "${SLICE_DIR}/05_pk_set.tgt.dat"; then
+    SRC_ROWS="$(wc -l < "${SRC_KEYS}" | tr -d '[:space:]')"
+    TGT_ROWS="$(wc -l < "${TGT_KEYS}" | tr -d '[:space:]')"
+    SRC_DISTINCT="$(count_distinct_keys "${SRC_KEYS}")"
+    TGT_DISTINCT="$(count_distinct_keys "${TGT_KEYS}")"
+    if [[ "${SRC_ROWS}" == "${SRC_DISTINCT}" \
+          && "${TGT_ROWS}" == "${TGT_DISTINCT}" \
+          && "${SRC_ROWS}" == "${TGT_ROWS}" \
+          && "${SRC_ROWS}" == "${SRC_CNT}" \
+          && "${TGT_ROWS}" == "${TGT_CNT}" ]]; then
+      LINES+=("T5_stat=PASS cnt=${SRC_ROWS} dist=${SRC_DISTINCT}")
+    else
+      fail
+      LINES+=("T5_stat=FAIL src=${SRC_ROWS}/${SRC_DISTINCT} tgt=${TGT_ROWS}/${TGT_DISTINCT} t1=${SRC_CNT}/${TGT_CNT}")
+      append_diff T5_stat \
+        "rows/distinct src=${SRC_ROWS}/${SRC_DISTINCT} tgt=${TGT_ROWS}/${TGT_DISTINCT} T1=${SRC_CNT}/${TGT_CNT}"
+    fi
+
+    if cmp -s "${SRC_KEYS}" "${TGT_KEYS}"; then
       LINES+=("T5_set=PASS")
     else
       fail
       LINES+=("T5_set=FAIL")
-      _diff_rows=()
-      while IFS= read -r _r; do _diff_rows+=("${_r}"); done < <(diff -u "${SLICE_DIR}/05_pk_set.src.dat" "${SLICE_DIR}/05_pk_set.tgt.dat" | head -n "${MAX_DIFF_LINES}" || true)
-      append_diff T5_set "${_diff_rows[@]}"
+      append_file_diff T5_set "${SRC_KEYS}" "${TGT_KEYS}"
     fi
   else
-    EXIT_CODE=2
-    OVERALL=FAIL
-    LINES+=("T5_set=ERROR")
+    infrastructure_error
+    LINES+=("T2_hash=ERROR")
+    LINES+=("T3_derived=SKIP")
+    LINES+=("T5_dup=SKIP reason=hash_error")
+    LINES+=("T5_null=SKIP reason=hash_error")
+    LINES+=("T5_stat=SKIP reason=hash_error")
+    LINES+=("T5_set=SKIP reason=hash_error")
   fi
+else
+  LINES+=("T2_hash=SKIP reason=no_primary_key")
+  LINES+=("T3_derived=SKIP")
+  LINES+=("T5_dup=SKIP reason=no_primary_key")
+  LINES+=("T5_null=SKIP reason=no_primary_key")
+  LINES+=("T5_stat=SKIP reason=no_primary_key")
+  LINES+=("T5_set=SKIP reason=no_primary_key")
 fi
 
 {
   echo "sheet=${TABLE_NAME}"
   echo "beginTm=${BEGIN_TM}"
   echo "endTm=${END_TM}"
-  echo "tmColumn=${TM_COLUMN}"
+  echo "srcTmColumn=${SRC_TM_COLUMN}"
+  echo "tgtTmColumn=${TGT_TM_COLUMN}"
+  echo "byDayCheck=${BY_DAY_CHECK}"
   echo "amountCheck=${AMOUNT_CHECK}"
   echo "overall=${OVERALL}"
   echo ""
