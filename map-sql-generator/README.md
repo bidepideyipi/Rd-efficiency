@@ -8,10 +8,11 @@
 4. **落标一致比对**：按 SQLite 数标规则扫描 OceanBase 基表，生成 ALTER SQL
 5. **多环境数据库一致比对**：左库基线对齐右库 DDL + 数标规则
 6. **错误码标准参考**：厂商错误码映射银行规范码入库 SQLite，按分类筛选 + 错误码/说明模糊查询
+7. **IBM MQ 快速消费**：网页配置 IP/端口/队列管理器/通道/来账·往账队列（SQLite），选定后开始/停止持续消费
 
 要求：**JDK 8+**（工程按 1.8 编译；Spring Boot 2.7.18）。
 
-## 启动 Web
+## 启动 Web（开发）
 
 ```bash
 cd map-sql-generator
@@ -21,6 +22,36 @@ mvn spring-boot:run
 浏览器打开：http://localhost:8080
 
 左侧菜单切换工具。
+
+## 打包运行（外挂配置 + SQLite）
+
+```bash
+cd map-sql-generator
+mvn -DskipTests package
+```
+
+产物目录：`target/dist/`
+
+| 文件 | 说明 |
+|------|------|
+| `map-sql-generator-*.jar` | 可执行胖 jar（**不含** `application.yml`） |
+| `application.yml` | 外挂配置，与 jar 同目录；改端口/数据源后重启即可 |
+| `data-standard.db` | 由 `mig.standard-db-path` 指定，默认 `./data-standard.db`；可不预置，首次启动自动建表 |
+| `start.sh` / `start.bat` | 在本目录启动，保证相对路径生效 |
+
+```bash
+cd target/dist
+./start.sh
+# 或: java -jar map-sql-generator-1.0.0-SNAPSHOT.jar
+```
+
+Spring Boot 会自动加载同目录 `application.yml`。也可显式指定：
+
+```bash
+java -jar map-sql-generator-1.0.0-SNAPSHOT.jar \
+  --spring.config.additional-location=file:./application.yml \
+  --mig.standard-db-path=./data-standard.db
+```
 
 ---
 
@@ -95,7 +126,7 @@ CHAR / CLOB / NUMBER 等不能直接 `MODIFY` 时，生成**四步重建**：
 
 ```yaml
 mig:
-  standard-db-path: ${user.home}/mig/data-standard.db
+  standard-db-path: ./data-standard.db   # 打包运行时放在 jar 同目录
 ```
 
 首次启动自动建表并写入默认规则（CHAR / CLOB / AMOUNT）。
@@ -123,3 +154,34 @@ mig:
 - `GET /api/errorcode/summary` — 合计与分类统计
 - `GET /api/errorcode/categories` — 分类列表
 - `GET /api/errorcode?category=&code=&message=` — 查询
+
+---
+
+## 工具 6：IBM MQ 快速消费
+
+在页面维护多套 IBM MQ 客户端连接（与数标共用 `mig.standard-db-path` SQLite 表 `mq_endpoint_config`）：
+
+| 字段 | 说明 |
+|------|------|
+| IP / 端口 | 队列管理器监听地址 |
+| 队列管理器 | Queue Manager 名 |
+| 通道 | 客户端通道（如 `*.SVRCONN`） |
+| 来账队列 / 往账队列 | 至少填一项 |
+| 用户名 / 密码 | 可选 |
+
+### 页面用法
+
+1. 填写并保存配置
+2. 在列表中「选用」，选消费侧（来账 / 往账 / 两者）
+3. 「测试连接」校验可达；「开始消费」后台 MQGET；「停止消费」断开
+
+消息预览保留最近约 200 条（含级别 / 队列 / MessageId / 正文截断）。
+
+### API
+
+- `GET/POST /api/mq/configs`、`PUT/DELETE /api/mq/configs/{id}`
+- `POST /api/mq/configs/{id}/test`
+- `GET /api/mq/configs/{id}/depth?side=BOTH|INBOUND|OUTBOUND` — 查询队列积压（CURDEPTH，不消费）
+- `POST /api/mq/consume/start` — `{ "configId": 1, "side": "BOTH|INBOUND|OUTBOUND" }`
+- `POST /api/mq/consume/stop`
+- `GET /api/mq/consume/status`

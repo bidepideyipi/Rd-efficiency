@@ -56,7 +56,12 @@ public class ErrorCodeRepository {
                 cnt = rs.getInt(1);
             }
             if (cnt == 0) {
-                importFromClasspath(conn);
+                try {
+                    importFromClasspath(conn);
+                } catch (IllegalStateException missing) {
+                    // 外挂空库且 jar 未带种子表时允许启动，页面可后续自行导入
+                    System.err.println("[errorcode] 跳过种子导入: " + missing.getMessage());
+                }
             }
         } catch (Exception e) {
             throw new IllegalStateException("初始化错误码 SQLite 失败: " + dbPath, e);

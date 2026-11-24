@@ -20,8 +20,8 @@ mig:
   join-condition-conflict: error
   require-sql-rule-when-present: false
   write-meta: true
-  # 数据标准规则库（SQLite）
-  standard-db-path: ${user.home}/mig/data-standard.db
+  # 数据标准 / 错误码 / MQ 配置（SQLite）。打包运行时与 jar 同目录的 ./data-standard.db
+  standard-db-path: ./data-standard.db
   # OceanBase 数据源（库↔Excel 对比 / 数标扫描）。密码勿提交仓库。
   datasources:
     - id: yl1-ibps

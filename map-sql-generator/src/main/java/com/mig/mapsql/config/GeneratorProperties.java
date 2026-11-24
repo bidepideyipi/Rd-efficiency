@@ -19,8 +19,8 @@ public class GeneratorProperties {
     private String joinConditionConflict = "error";
     private boolean requireSqlRuleWhenPresent = true;
     private boolean writeMeta = true;
-    /** 数标 SQLite 文件路径 */
-    private String standardDbPath = System.getProperty("user.home") + "/mig/data-standard.db";
+    /** 数标 / 错误码 / MQ 配置 SQLite；相对路径相对进程工作目录（jar 旁 ./data-standard.db） */
+    private String standardDbPath = "./data-standard.db";
 
     public String getDefaultExportDir() {
         return defaultExportDir;

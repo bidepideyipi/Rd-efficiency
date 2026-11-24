@@ -97,12 +97,20 @@
       color: var(--muted);
       margin-bottom: 6px;
     }
-    input[type="text"] {
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
       font-size: 14px;
+      background: #fff;
+    }
+    button.danger {
+      background: var(--danger);
+      color: #fff;
     }
     .row {
       display: flex;
@@ -255,6 +263,7 @@
     <button type="button" class="tool" data-tool="standard">落标一致比对</button>
     <button type="button" class="tool" data-tool="dbdb">多环境数据库一致比对</button>
     <button type="button" class="tool" data-tool="errorcode">错误码标准参考</button>
+    <button type="button" class="tool" data-tool="mq">IBM MQ 快速消费</button>
   </nav>
   <main>
     <section id="panel-sql" class="panel active">
@@ -492,7 +501,7 @@
         <div class="row">
           <div>
             <label>分类</label>
-            <select id="ecCategory" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+            <select id="ecCategory">
               <option value="">全部</option>
             </select>
           </div>
@@ -516,6 +525,108 @@
       </section>
     </section>
 
+    <section id="panel-mq" class="panel">
+      <h1>IBM MQ 快速消费 <span class="pill">来账 / 往账</span></h1>
+      <p class="sub">配置 IP、端口、队列管理器、通道与来/往账队列，保存至 SQLite；选定配置后可开始/停止持续消费，消息预览显示于下方。</p>
+
+      <section class="card">
+        <label>连接配置</label>
+        <input type="hidden" id="mqId"/>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>名称</label>
+            <input id="mqName" type="text" placeholder="如 yl1-支付MQ"/>
+          </div>
+          <div>
+            <label>IP / 主机</label>
+            <input id="mqHost" type="text" placeholder="10.x.x.x"/>
+          </div>
+          <div>
+            <label>端口</label>
+            <input id="mqPort" type="number" value="1414" min="1" max="65535"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>队列管理器</label>
+            <input id="mqQm" type="text" placeholder="QM.NAME"/>
+          </div>
+          <div>
+            <label>通道</label>
+            <input id="mqChannel" type="text" placeholder="CHANNEL.SVRCONN"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>来账队列</label>
+            <input id="mqInbound" type="text" placeholder="可选，与往账至少填一项"/>
+          </div>
+          <div>
+            <label>往账队列</label>
+            <input id="mqOutbound" type="text" placeholder="可选，与来账至少填一项"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>用户名（可选）</label>
+            <input id="mqUser" type="text" placeholder="无鉴权可留空"/>
+          </div>
+          <div>
+            <label>密码（可选）</label>
+            <input id="mqPass" type="password" placeholder="无鉴权可留空" autocomplete="off"/>
+          </div>
+          <div>
+            <label>备注</label>
+            <input id="mqRemark" type="text" placeholder="可选"/>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnMqSave">保存配置</button>
+          <button class="secondary" type="button" id="btnMqReset">清空表单</button>
+        </div>
+        <p id="mqFormStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <label>已保存配置</label>
+        <div class="table-wrap" id="mqConfigWrap" style="margin-top:8px">
+          <em style="color:#5b6775;display:block;padding:12px">加载中…</em>
+        </div>
+      </section>
+
+      <section class="card">
+        <label>消费控制</label>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>选用配置</label>
+            <select id="mqSelect">
+              <option value="">请选择…</option>
+            </select>
+          </div>
+          <div>
+            <label>消费侧</label>
+            <select id="mqSide">
+              <option value="BOTH">来账 + 往账</option>
+              <option value="INBOUND">仅来账</option>
+              <option value="OUTBOUND">仅往账</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnMqTest">测试连接</button>
+          <button class="secondary" type="button" id="btnMqDepth">查询积压</button>
+          <button type="button" id="btnMqStart">开始消费</button>
+          <button class="danger" type="button" id="btnMqStop" disabled>停止消费</button>
+          <button class="secondary" type="button" id="btnMqClearLog">清空日志</button>
+        </div>
+        <div class="summary" id="mqSummary" style="margin-top:12px"></div>
+        <div class="summary" id="mqDepthSummary" style="margin-top:4px"></div>
+        <p id="mqRunStatus" class="sub" style="margin:0 0 8px"></p>
+        <label>消息 / 事件</label>
+        <pre id="mqLog">等待操作…</pre>
+      </section>
+    </section>
+
   </main>
 </div>
 <script>
@@ -529,6 +640,13 @@
       const tool = btn.getAttribute('data-tool');
       document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
       $('panel-' + tool).classList.add('active');
+      if (tool === 'mq') {
+        loadMqConfigs();
+        pollMqStatus();
+        startMqPoll();
+      } else {
+        stopMqPoll();
+      }
     });
   });
 
@@ -1210,7 +1328,295 @@
     await searchErrorCodes();
   };
 
-  Promise.all([initSql(), initDiff(), initStandard(), initDbdb(), initErrorCode()]).catch(e => {
+  let mqConfigs = [];
+  let mqPollTimer = null;
+  let mqLogCleared = false;
+
+  function mqEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function resetMqForm() {
+    $('mqId').value = '';
+    $('mqName').value = '';
+    $('mqHost').value = '';
+    $('mqPort').value = '1414';
+    $('mqQm').value = '';
+    $('mqChannel').value = '';
+    $('mqInbound').value = '';
+    $('mqOutbound').value = '';
+    $('mqUser').value = '';
+    $('mqPass').value = '';
+    $('mqRemark').value = '';
+    $('mqFormStatus').textContent = '';
+  }
+
+  function fillMqForm(cfg) {
+    $('mqId').value = cfg.id || '';
+    $('mqName').value = cfg.name || '';
+    $('mqHost').value = cfg.host || '';
+    $('mqPort').value = cfg.port || 1414;
+    $('mqQm').value = cfg.queueManager || '';
+    $('mqChannel').value = cfg.channel || '';
+    $('mqInbound').value = cfg.inboundQueue || '';
+    $('mqOutbound').value = cfg.outboundQueue || '';
+    $('mqUser').value = cfg.username || '';
+    $('mqPass').value = cfg.password || '';
+    $('mqRemark').value = cfg.remark || '';
+    $('mqFormStatus').innerHTML = '<span class="ok">已载入配置 #' + cfg.id + '，修改后点保存</span>';
+  }
+
+  function readMqForm() {
+    return {
+      name: $('mqName').value.trim(),
+      host: $('mqHost').value.trim(),
+      port: Number($('mqPort').value || 1414),
+      queueManager: $('mqQm').value.trim(),
+      channel: $('mqChannel').value.trim(),
+      inboundQueue: $('mqInbound').value.trim(),
+      outboundQueue: $('mqOutbound').value.trim(),
+      username: $('mqUser').value.trim(),
+      password: $('mqPass').value,
+      remark: $('mqRemark').value.trim()
+    };
+  }
+
+  function renderMqConfigs() {
+    const sel = $('mqSelect');
+    const prev = sel.value;
+    if (!mqConfigs.length) {
+      sel.innerHTML = '<option value="">暂无配置</option>';
+      $('mqConfigWrap').innerHTML = '<em style="color:#5b6775;display:block;padding:12px">暂无配置，请先保存</em>';
+      return;
+    }
+    sel.innerHTML = mqConfigs.map(c =>
+      '<option value="' + c.id + '">' + mqEsc(c.name) + ' — ' + mqEsc(c.host) + ':' + c.port + '</option>'
+    ).join('');
+    if (prev && mqConfigs.some(c => String(c.id) === String(prev))) {
+      sel.value = prev;
+    }
+    let html = '<table class="data"><thead><tr>' +
+      '<th>名称</th><th>主机</th><th>QM</th><th>通道</th><th>来账</th><th>往账</th><th></th>' +
+      '</tr></thead><tbody>';
+    mqConfigs.forEach(c => {
+      html += '<tr>' +
+        '<td>' + mqEsc(c.name) + '</td>' +
+        '<td><code>' + mqEsc(c.host) + ':' + c.port + '</code></td>' +
+        '<td><code>' + mqEsc(c.queueManager) + '</code></td>' +
+        '<td><code>' + mqEsc(c.channel) + '</code></td>' +
+        '<td><code>' + mqEsc(c.inboundQueue) + '</code></td>' +
+        '<td><code>' + mqEsc(c.outboundQueue) + '</code></td>' +
+        '<td style="white-space:nowrap">' +
+          '<button type="button" class="secondary" data-mq-edit="' + c.id + '" style="padding:4px 8px;margin-right:4px">编辑</button>' +
+          '<button type="button" class="secondary" data-mq-use="' + c.id + '" style="padding:4px 8px;margin-right:4px">选用</button>' +
+          '<button type="button" class="danger" data-mq-del="' + c.id + '" style="padding:4px 8px">删除</button>' +
+        '</td></tr>';
+    });
+    html += '</tbody></table>';
+    $('mqConfigWrap').innerHTML = html;
+    $('mqConfigWrap').querySelectorAll('[data-mq-edit]').forEach(btn => {
+      btn.onclick = () => {
+        const cfg = mqConfigs.find(x => String(x.id) === btn.getAttribute('data-mq-edit'));
+        if (cfg) fillMqForm(cfg);
+      };
+    });
+    $('mqConfigWrap').querySelectorAll('[data-mq-use]').forEach(btn => {
+      btn.onclick = () => { $('mqSelect').value = btn.getAttribute('data-mq-use'); };
+    });
+    $('mqConfigWrap').querySelectorAll('[data-mq-del]').forEach(btn => {
+      btn.onclick = () => deleteMqConfig(btn.getAttribute('data-mq-del'));
+    });
+  }
+
+  async function loadMqConfigs() {
+    const res = await fetch('/api/mq/configs');
+    const data = await res.json().catch(() => ([]));
+    if (!res.ok) {
+      $('mqConfigWrap').innerHTML = '<span class="err">' + mqEsc(data.error || '加载失败') + '</span>';
+      return;
+    }
+    mqConfigs = Array.isArray(data) ? data : [];
+    renderMqConfigs();
+  }
+
+  async function saveMqConfig() {
+    const body = readMqForm();
+    const id = $('mqId').value;
+    const url = id ? '/api/mq/configs/' + id : '/api/mq/configs';
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('mqFormStatus').innerHTML = '<span class="err">' + mqEsc(data.error || '保存失败') + '</span>';
+      return;
+    }
+    $('mqFormStatus').innerHTML = '<span class="ok">已保存 #' + data.id + '</span>';
+    $('mqId').value = data.id;
+    await loadMqConfigs();
+    $('mqSelect').value = String(data.id);
+  }
+
+  async function deleteMqConfig(id) {
+    if (!confirm('确认删除配置 #' + id + '？')) return;
+    const res = await fetch('/api/mq/configs/' + id, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || '删除失败');
+      return;
+    }
+    if (String($('mqId').value) === String(id)) resetMqForm();
+    await loadMqConfigs();
+  }
+
+  function startMqPoll() {
+    stopMqPoll();
+    mqPollTimer = setInterval(() => { pollMqStatus().catch(() => {}); }, 1500);
+  }
+
+  function stopMqPoll() {
+    if (mqPollTimer) {
+      clearInterval(mqPollTimer);
+      mqPollTimer = null;
+    }
+  }
+
+  function renderMqStatus(data) {
+    const running = !!data.running;
+    $('btnMqStart').disabled = running;
+    $('btnMqStop').disabled = !running;
+    const sideLabel = { BOTH: '来账+往账', INBOUND: '来账', OUTBOUND: '往账' }[data.side] || (data.side || '-');
+    $('mqSummary').innerHTML =
+      '<span>状态 <strong>' + (running ? '消费中' : '空闲') + '</strong></span>' +
+      '<span>配置 <strong>' + mqEsc(data.configName || '-') + '</strong>' +
+        (data.configId ? ' (#' + data.configId + ')' : '') + '</span>' +
+      '<span>侧 <strong>' + mqEsc(sideLabel) + '</strong></span>' +
+      '<span>累计消息 <strong>' + (data.consumedTotal || 0) + '</strong></span>' +
+      (data.startedAt ? '<span>开始于 <strong>' + mqEsc(data.startedAt) + '</strong></span>' : '');
+    if (data.lastError) {
+      $('mqRunStatus').innerHTML = '<span class="err">最近错误：' + mqEsc(data.lastError) + '</span>';
+    } else if (running) {
+      $('mqRunStatus').innerHTML = '<span class="ok">正在连接并消费…</span>';
+    } else {
+      $('mqRunStatus').textContent = '';
+    }
+    if (mqLogCleared && !(data.recent || []).length) {
+      return;
+    }
+    mqLogCleared = false;
+    const lines = (data.recent || []).slice().reverse().map(r => {
+      const head = '[' + (r.time || '') + '] ' + (r.level || '') +
+        (r.queue ? ' ' + r.queue : '') +
+        (r.messageId ? ' ' + r.messageId : '');
+      return head + '\n' + (r.body || '');
+    });
+    $('mqLog').textContent = lines.length ? lines.join('\n\n---\n\n') : '暂无消息';
+  }
+
+  async function pollMqStatus() {
+    const res = await fetch('/api/mq/consume/status');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    renderMqStatus(data);
+  }
+
+  async function selectedMqId() {
+    const id = $('mqSelect').value;
+    if (!id) {
+      alert('请先选择配置');
+      return null;
+    }
+    return Number(id);
+  }
+
+  $('btnMqReset').onclick = () => resetMqForm();
+  $('btnMqSave').onclick = () => saveMqConfig().catch(e => {
+    $('mqFormStatus').innerHTML = '<span class="err">' + mqEsc(e.message) + '</span>';
+  });
+  $('btnMqClearLog').onclick = () => {
+    mqLogCleared = true;
+    $('mqLog').textContent = '（已清空本地显示；后台仍在累计）';
+  };
+
+  $('btnMqTest').onclick = async () => {
+    const id = await selectedMqId();
+    if (id == null) return;
+    $('mqRunStatus').textContent = '测试连接中…';
+    const res = await fetch('/api/mq/configs/' + id + '/test', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('mqRunStatus').innerHTML = '<span class="err">' + mqEsc(data.error || '连接失败') + '</span>';
+      return;
+    }
+    $('mqRunStatus').innerHTML = '<span class="ok">' + mqEsc(data.message || '连接成功') + '</span>';
+  };
+
+  $('btnMqDepth').onclick = async () => {
+    const id = await selectedMqId();
+    if (id == null) return;
+    $('mqRunStatus').textContent = '查询积压中…';
+    const side = encodeURIComponent($('mqSide').value || 'BOTH');
+    const res = await fetch('/api/mq/configs/' + id + '/depth?side=' + side);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('mqDepthSummary').innerHTML = '';
+      $('mqRunStatus').innerHTML = '<span class="err">' + mqEsc(data.error || '查询失败') + '</span>';
+      return;
+    }
+    const parts = (data.queues || []).map(q => {
+      if (q.ok === false) {
+        return '<span><code>' + mqEsc(q.queue) + '</code> <span class="err">' + mqEsc(q.error || '失败') + '</span></span>';
+      }
+      return '<span><code>' + mqEsc(q.queue) + '</code> 积压 <strong>' + q.currentDepth + '</strong>' +
+        (q.maximumDepth != null ? ' / 上限 ' + q.maximumDepth : '') +
+        (q.openInputCount != null ? ' · 读端 ' + q.openInputCount : '') +
+        '</span>';
+    });
+    $('mqDepthSummary').innerHTML =
+      '<span>合计积压 <strong>' + (data.totalDepth != null ? data.totalDepth : '-') + '</strong></span>' +
+      parts.join('') +
+      (data.inquiredAt ? '<span>' + mqEsc(data.inquiredAt) + '</span>' : '');
+    $('mqRunStatus').innerHTML = '<span class="ok">积压已刷新（CURDEPTH，未取消息）</span>';
+  };
+
+  $('btnMqStart').onclick = async () => {
+    const id = await selectedMqId();
+    if (id == null) return;
+    mqLogCleared = false;
+    const res = await fetch('/api/mq/consume/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ configId: id, side: $('mqSide').value })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('mqRunStatus').innerHTML = '<span class="err">' + mqEsc(data.error || '启动失败') + '</span>';
+      return;
+    }
+    renderMqStatus(data);
+    startMqPoll();
+  };
+
+  $('btnMqStop').onclick = async () => {
+    const res = await fetch('/api/mq/consume/stop', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('mqRunStatus').innerHTML = '<span class="err">' + mqEsc(data.error || '停止失败') + '</span>';
+      return;
+    }
+    renderMqStatus(data);
+  };
+
+  async function initMq() {
+    // 不主动轮询；进入面板时再启
+    resetMqForm();
+  }
+
+  Promise.all([initSql(), initDiff(), initStandard(), initDbdb(), initErrorCode(), initMq()]).catch(e => {
     if ($('dirStatus')) $('dirStatus').textContent = e.message;
     if ($('dsStatus')) $('dsStatus').textContent = e.message;
     if ($('stdDsStatus')) $('stdDsStatus').textContent = e.message;
