@@ -1,6 +1,7 @@
 package com.mig.mapsql.core.excel;
 
 import com.mig.mapsql.config.GeneratorProperties;
+import com.mig.mapsql.core.model.ExcelColumns;
 import com.mig.mapsql.core.model.FieldMapping;
 import com.mig.mapsql.core.model.LeftJoinSpec;
 import com.mig.mapsql.core.model.MappingType;
@@ -141,7 +142,13 @@ public class ExcelMappingReader {
             field.setDefaultValue(cell(row, 18));
             field.setRuleExpression(cell(row, 21));
             field.setJoinCondition(cell(row, 22));
-            field.setRemark(cell(row, 23));
+            // 源侧备注；目标侧备注一并写入，便于识别 {{时间分区}}
+            String remark = cell(row, ExcelColumns.REMARK);
+            String targetRemark = cell(row, ExcelColumns.TARGET_REMARK);
+            if (!Strings.isBlank(targetRemark)) {
+                remark = Strings.isBlank(remark) ? targetRemark : remark + " " + targetRemark;
+            }
+            field.setRemark(remark);
             table.getFields().add(field);
 
             if (!Strings.isBlank(field.getJoinCondition())) {
@@ -160,8 +167,55 @@ public class ExcelMappingReader {
             table.setTargetTable(SheetNames.resolveTableName(table.getSheetName()));
         }
 
+        table.setTimeColumn(resolveTimeColumn(table));
         finalizeRelations(table, new ArrayList<String>(joinCandidates.values()));
         return table;
+    }
+
+    /**
+     * 备注含 {{时间分区}} 的行：取其源表栏位作为时间过滤列；无标记则空（不拼时间窗）。
+     * 多行标记时取首个可解析列名。
+     */
+    static String resolveTimeColumn(TableMapping table) {
+        if (table == null || table.getFields().isEmpty()) {
+            return "";
+        }
+        for (FieldMapping f : table.getFields()) {
+            if (!marksTimePartition(f.getRemark())) {
+                continue;
+            }
+            String col = firstIdentifier(f.getSourceColumn());
+            if (Strings.isBlank(col)) {
+                col = firstIdentifier(f.getTargetColumn());
+            }
+            if (!Strings.isBlank(col)) {
+                return col;
+            }
+        }
+        return "";
+    }
+
+    static boolean marksTimePartition(String remark) {
+        if (Strings.isBlank(remark)) {
+            return false;
+        }
+        return remark.contains(ExcelColumns.TIME_PARTITION_MARK);
+    }
+
+    /** 取 a.COL / COL 中的列标识；非法则空。 */
+    static String firstIdentifier(String raw) {
+        if (Strings.isBlank(raw)) {
+            return "";
+        }
+        String s = raw.trim();
+        int dot = s.lastIndexOf('.');
+        if (dot >= 0 && dot + 1 < s.length()) {
+            s = s.substring(dot + 1).trim();
+        }
+        if (!s.matches("(?i)[A-Z][A-Z0-9_#$]*")) {
+            return "";
+        }
+        return s;
     }
 
     void finalizeRelations(TableMapping table, List<String> joinRaws) {

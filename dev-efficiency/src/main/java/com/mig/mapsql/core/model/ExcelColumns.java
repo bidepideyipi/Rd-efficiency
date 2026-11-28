@@ -21,6 +21,10 @@ public final class ExcelColumns {
     public static final int DEFAULT_VALUE = 18;
     public static final int RULE = 21;
     public static final int JOIN_CONDITION = 22;
+    /** 源侧映射「备注」（V0.5.2 起可标 {{时间分区}}） */
+    public static final int REMARK = 23;
+    /** 目标侧「备注」 */
+    public static final int TARGET_REMARK = 10;
 
     public static final String H_TARGET_COLUMN = "栏位";
     public static final String H_MAPPING_TYPE = "映射类型";
@@ -30,6 +34,9 @@ public final class ExcelColumns {
     public static final String H_RULE = "规则说明";
     public static final String H_JOIN = "库表关联条件";
     public static final String H_TARGET_TYPE = "数据类型";
+    public static final String H_REMARK = "备注";
+    /** Excel 备注中标记本行源栏位为时间过滤列 */
+    public static final String TIME_PARTITION_MARK = "{{时间分区}}";
 
     private ExcelColumns() {
     }

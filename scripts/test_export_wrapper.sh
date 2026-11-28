@@ -32,6 +32,7 @@ EOF
 
 cat > "${TMP_DIR}/sql/${TABLE_NAME}.sql" <<EOF
 -- targetTable: ${TABLE_NAME}
+-- tmColumn: TRANSDT
 -- 故意放一个过期列，验证脚本以实际 SELECT 列数为准。
 -- exportColumns: TRADECODE,CRTDATE,COMPLEXCOL,STALE_COLUMN
 -- exportNumberColumns: CRTDATE
@@ -43,8 +44,8 @@ SELECT
     ELSE 'a,b' END) AS COMPLEXCOL
 FROM source_a a
 LEFT JOIN source_b b ON b.id = a.id
-WHERE a.{{tmColumn}} >= '{{beginTm}}'
-  AND a.{{tmColumn}} < '{{endTm}}'
+WHERE a.TRANSDT >= '{{beginTm}}'
+  AND a.TRANSDT < '{{endTm}}'
   AND (
     a.active = 'Y'
   );
@@ -65,7 +66,7 @@ chmod +x "${TMP_DIR}/bin/sqlplus" "${TMP_DIR}/export_by_map.sh" "${TMP_DIR}/expo
 FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input.sql" \
 FAKE_EXPORT_SQL_CAPTURE="${EXPORT_SQL}" \
   PATH="${TMP_DIR}/bin:${PATH}" \
-  "${TMP_DIR}/export_by_map.sh" 20260101 20260102 TRANSDT "${TABLE_NAME}" \
+  "${TMP_DIR}/export_by_map.sh" 20260101 20260102 "${TABLE_NAME}" \
   >"${TMP_DIR}/stdout.log" 2>"${TMP_DIR}/stderr.log"
 
 CTL="${TMP_DIR}/out/${TABLE_NAME}_20260101_20260102.ctl"
@@ -99,15 +100,30 @@ if grep -q 'STALE_COLUMN' "${CTL}"; then
   exit 1
 fi
 grep -q 'exportColumns header does not match actual SELECT aliases' "${TMP_DIR}/stderr.log"
+grep -q "a.TRANSDT >= '20260101'" "${EXPORT_SQL}"
+grep -q "a.TRANSDT < '20260102'" "${EXPORT_SQL}"
 
-# 显式传空时间列时，删除旧模板中的时间谓词，并保留后续业务条件。
+# 无时间列 SQL：模板本身不含时间谓词，只替换 begin/end（无占位可替）。
+NO_TIME_TABLE="${TABLE_NAME}_NOTIME"
+cat > "${TMP_DIR}/sql/${NO_TIME_TABLE}.sql" <<EOF
+-- targetTable: ${NO_TIME_TABLE}
+-- tmColumn:
+-- exportColumns: ID
+-- exportNumberColumns:
+SELECT
+  (a.id) AS ID
+FROM source_a a
+WHERE (
+  a.active = 'Y'
+);
+EOF
 FAKE_SQLPLUS_CAPTURE="${TMP_DIR}/sqlplus-input-no-time.sql" \
 FAKE_EXPORT_SQL_CAPTURE="${TMP_DIR}/captured-export-no-time.sql" \
   PATH="${TMP_DIR}/bin:${PATH}" \
-  "${TMP_DIR}/export_by_map.sh" 20260101 20260301 "" "${TABLE_NAME}" \
+  "${TMP_DIR}/export_by_map.sh" 20260101 20260301 "${NO_TIME_TABLE}" \
   >"${TMP_DIR}/stdout-no-time.log" 2>"${TMP_DIR}/stderr-no-time.log"
 if grep -Eq '\{\{(beginTm|endTm|tmColumn)\}\}' "${TMP_DIR}/captured-export-no-time.sql"; then
-  echo "time placeholder remained when tmColumn was empty" >&2
+  echo "time placeholder remained in no-time SQL" >&2
   exit 1
 fi
 grep -Eq "^[[:space:]]*WHERE \\($" "${TMP_DIR}/captured-export-no-time.sql"
@@ -124,7 +140,7 @@ end = 20260301
 interval = 1m
 onError = stop
 tables =
-  ${TABLE_NAME} =
+  ${NO_TIME_TABLE}
 EOF
 cat > "${TMP_DIR}/export_by_map.sh" <<'EOF'
 #!/bin/bash
@@ -133,7 +149,35 @@ EOF
 chmod +x "${TMP_DIR}/export_by_map.sh"
 FAKE_EXPORT_CALLS="${TMP_DIR}/export.calls" "${TMP_DIR}/export_batch.sh" \
   >"${TMP_DIR}/batch.stdout" 2>"${TMP_DIR}/batch.stderr"
-grep -qx "<20260101 20260301  ${TABLE_NAME}>" "${TMP_DIR}/export.calls"
+grep -qx "<20260101 20260301 ${NO_TIME_TABLE}>" "${TMP_DIR}/export.calls"
 [[ "$(wc -l < "${TMP_DIR}/export.calls" | tr -d '[:space:]')" -eq 1 ]]
+
+# 有时间列按月分片。
+cat > "${TMP_DIR}/sql/${TABLE_NAME}.sql" <<EOF
+-- targetTable: ${TABLE_NAME}
+-- tmColumn: TRANSDT
+-- exportColumns: ID
+-- exportNumberColumns:
+SELECT (a.id) AS ID FROM source_a a
+WHERE a.TRANSDT >= '{{beginTm}}' AND a.TRANSDT < '{{endTm}}';
+EOF
+cat > "${TMP_DIR}/export-job.conf" <<EOF
+sqlDir = ${TMP_DIR}/sql
+outDir = ${TMP_DIR}/out
+connect = test/test@SOURCE
+tgtConnect = test/test@TARGET
+start = 20260101
+end = 20260301
+interval = 1m
+onError = stop
+tables =
+  ${TABLE_NAME}
+EOF
+: > "${TMP_DIR}/export.calls"
+FAKE_EXPORT_CALLS="${TMP_DIR}/export.calls" "${TMP_DIR}/export_batch.sh" \
+  >"${TMP_DIR}/batch2.stdout" 2>"${TMP_DIR}/batch2.stderr"
+grep -qx "<20260101 20260201 ${TABLE_NAME}>" "${TMP_DIR}/export.calls"
+grep -qx "<20260201 20260301 ${TABLE_NAME}>" "${TMP_DIR}/export.calls"
+[[ "$(wc -l < "${TMP_DIR}/export.calls" | tr -d '[:space:]')" -eq 2 ]]
 
 echo "export wrapper regression test: OK"

@@ -32,7 +32,7 @@
 
 生成后的 SQL 仍由跳板机 Shell：
 
-1. 替换 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
+1. 替换 `{{beginTm}}` / `{{endTm}}`（时间列已由生成器按 yml 写入，不再使用 `{{tmColumn}}`）
 2. **sqlplus**（源库）：`SPOOL` → 无表头、字段分隔符 `CHR(1)`（`0x01`）、自定义记录结束符 `X'1E1F1E0A'` 的 `.dat`
 3. 按同一映射列序生成 **sqlldr 控制文件** `.ctl`
 4. 目标侧 **sqlldr** 装载：`sqlldr user/pass@TGT control=….ctl`
@@ -389,7 +389,7 @@ WHERE s.{{tmColumn}} >= '{{beginTm}}'
 |--------|------|--------|
 | `{{beginTm}}` | 时间下界（含） | Shell `sed`/`envsubst` |
 | `{{endTm}}` | 时间上界（不含） | Shell |
-| `{{tmColumn}}` | 时间过滤列名 | Shell |
+| （时间列名） | 过滤列，如 `s.TRANTIME` | 生成器按 Excel 备注 `{{时间分区}}` 写死；无标记则不拼时间谓词 |
 
 约定：
 
@@ -787,7 +787,7 @@ TRAILING NULLCOLS
 | `start` / `end` | 总范围，左闭右开；`YYYYMMDD` 或 `YYYYMMDDHH24MISS` |
 | `interval` | 只按自然月：`Nm`，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | `stop` 立即停；`continue` 记失败后继续，结束时仍返回非 0 |
-| `tables` | 后续行 `表名 = 时间列`（任意 Oracle 标识符）；无需时间范围时右侧留空，整表只执行一次。无全局默认；已移除 `tmColumn` / `files` |
+| `tables` | 后续行每行一个表名；时间列见 Excel `{{时间分区}}` 与 SQL 头 `-- tmColumn:`；空则整表只执行一次 |
 
 ```bash
 ./export_batch.sh
@@ -806,7 +806,7 @@ TRAILING NULLCOLS
 
 ### 7.4 合约约束
 
-1. 三个占位符名称固定，大小写敏感：`{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`。  
+1. 时间窗占位符固定，大小写敏感：`{{beginTm}}` / `{{endTm}}`；时间列名由生成器写入。  
 2. `{表名}.sql` 以单条 `SELECT ... ;` 为主（可有注释）；SELECT 列表顺序 = Excel 非 `00` 映射行序 = `.dat` 字段序 = `.ctl` 列序。  
 3. Shell 侧对 `{{tmColumn}}` 做标识符格式校验后再替换（不限定列名集合）。  
 4. 运行时：**sqlplus** 导出无表头、`0x01` 字段分隔、`X'1E1F1E0A'` 记录分隔的 `.dat`；**sqlldr** 按同序 `.ctl` 装载。
@@ -840,7 +840,7 @@ TRAILING NULLCOLS
 | 快照 | 以 V0.4 `IBPS_PAYMENTINIT` 为 fixture，对比 `IBPS_PAYMENTINIT.sql` |
 | 单测 | 规则非空优先；`04` VARCHAR2→NUMBER；源长>目标长 `SUBSTR`；关联条件提取 WHERE |
 | 负例 | 缺源列、自然语言规则、类型无法转换、关联条件冲突 |
-| 契约 | 含 `{{beginTm}}`/`{{endTm}}`/`{{tmColumn}}`；WHERE 含关联条件谓词 |
+| 契约 | 含 `{{beginTm}}`/`{{endTm}}`（有时间列时）与 `-- tmColumn:` 头；WHERE 含关联条件谓词 |
 
 ---
 

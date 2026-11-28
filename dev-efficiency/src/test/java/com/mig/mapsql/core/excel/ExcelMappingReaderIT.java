@@ -36,10 +36,15 @@ class ExcelMappingReaderIT {
         TableMapping table = tables.get(0);
         List<ValidationMessage> messages = validator.validate(table);
         assertFalse(validator.hasError(messages), () -> messages.toString());
+        // V0.4 无 {{时间分区}}；V0.5.2+ 由备注解析。此处兜底以便断言 SQL 形态。
+        if (table.getTimeColumn() == null || table.getTimeColumn().isEmpty()) {
+            table.setTimeColumn("TRANTIME");
+        }
 
         String sql = renderer.render(table);
         assertTrue(sql.contains("FROM A10TIBPSDETAILLOG s"));
-        assertTrue(sql.contains("{{tmColumn}}"));
+        assertTrue(sql.contains("s.TRANTIME >="));
+        assertTrue(!sql.contains("{{tmColumn}}"));
         assertTrue(sql.contains("FUNCTION2 IN"));
         assertTrue(sql.contains("AS AMOUNT") || sql.contains("TO_NUMBER"));
     }
@@ -60,13 +65,17 @@ class ExcelMappingReaderIT {
         TableMapping table = tables.get(0);
         List<ValidationMessage> messages = validator.validate(table);
         assertFalse(validator.hasError(messages), () -> messages.toString());
+        if (table.getTimeColumn() == null || table.getTimeColumn().isEmpty()) {
+            table.setTimeColumn("TRANSDT");
+        }
 
         String sql = renderer.render(table);
         assertTrue(sql.toUpperCase().contains("FROM A08THVTRX"));
         assertTrue(sql.toUpperCase().contains("LEFT JOIN TA0LTXNSSNINFO"));
         assertTrue(sql.contains("ON "));
         assertTrue(sql.contains("cmtno") || sql.contains("CMTNO"));
-        assertTrue(sql.contains("{{tmColumn}}"));
+        assertTrue(sql.contains("s.TRANSDT >=") || sql.contains(".TRANSDT >="));
+        assertTrue(!sql.contains("{{tmColumn}}"));
     }
 
     @Test

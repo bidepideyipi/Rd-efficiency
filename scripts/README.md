@@ -43,9 +43,9 @@ interval = 1m
 onError = stop
 
 tables =
-  IBPS_PAYMENTINIT = TRANDATE
-  HVPS_PAYMENTINIT = WORKDATE
-  IBPS_MOBILEINFO =
+  IBPS_PAYMENTINIT
+  HVPS_PAYMENTINIT
+  IBPS_MOBILEINFO
 ```
 
 | 键 | 谁用 | 说明 |
@@ -61,11 +61,11 @@ tables =
 | `start` / `end` | export_batch；load_batch 无清单时 | 左闭右开 |
 | `interval` | 同上 | 只按自然月，如 `1m`；`start`/`end` 建议月初 |
 | `onError` | export_batch / load_batch | `stop` / `continue` |
-| `tables` | export_batch；load_batch 无清单时 | **每表一行** `表名 = 时间列`；无需时间范围时留空 |
+| `tables` | export_batch；load_batch 无清单时 | **每表一行表名**；时间列来自 Excel 备注 `{{时间分区}}` |
 
-时间列名为任意 Oracle 标识符（不限集合）。`表名 =` 表示不拼时间范围，并在整个
-`start`/`end` 范围内只执行一次，避免每个时间片重复导出整表。已移除全局
-`tmColumn` 与 `files` / `表名|列名` 写法。
+时间列由生成器按 Excel 备注写入 SQL（头注释 `-- tmColumn:` + WHERE 列名）。非空时
+`export_batch` 按月分片；空则整表在 `start`/`end` 内只执行一次。脚本只替换
+`{{beginTm}}` / `{{endTm}}`。
 
 多数据来源 Sheet（如 `HVPS_EXTPAYMENT1`）：`tables` 左侧写 **Sheet/sql 文件名**；`.dat`/`.ctl` 文件名同 Sheet；`.ctl` 的 `INTO TABLE` 为物理表名（去末位数字，与生成器 `SheetNames.resolveTableName` / SQL 头 `-- targetTable:` 一致）。
 
@@ -79,7 +79,7 @@ tables =
 ./export_batch.sh 20240315
 
 # 指定日 + 指定表，不再批量、不再分片
-./export_batch.sh 20240315 "IBPS_HOSTBOOKINIT_HIS = DEALDATE"
+./export_batch.sh 20240315 IBPS_HOSTBOOKINIT_HIS
 ```
 
 产物示例：
@@ -98,9 +98,9 @@ tables =
 ## 3. 单表单窗导出
 
 ```bash
-./export_by_map.sh <beginTm> <endTm> [tmColumn] [表名]
-# 整表导出（显式空时间列）
-./export_by_map.sh 20240301 20270301 "" IBPS_MOBILEINFO
+./export_by_map.sh <beginTm> <endTm> [表名]
+# 整表导出（SQL 头 -- tmColumn: 为空、无时间谓词）
+./export_by_map.sh 20240301 20270301 IBPS_MOBILEINFO
 ```
 
 ## 4. 单表单窗装载
@@ -165,9 +165,9 @@ discard 或全字段为空等情况仍返回失败。该模式不会回滚已经
 |--------|--------|
 | `{{beginTm}}` | 本片开始（含） |
 | `{{endTm}}` | 本片结束（不含） |
-| `{{srcTmColumn}}` | 源库时间列名（测试 SQL） |
-| `{{tgtTmColumn}}` | 目标库时间列名（测试 SQL） |
-| `{{tmColumn}}` | 旧测试 SQL兼容占位符；按执行端替换 |
+| `{{tgtTmColumn}}` | 目标库时间列名（测试 SQL；源侧已由生成器写死） |
+| `{{srcTmColumn}}` | 旧测试 SQL兼容；源侧新生成物一般不再出现 |
+| `{{tmColumn}}` | 旧 map/测试 SQL；需重新生成 |
 
 | 项 | 约定 |
 |----|------|

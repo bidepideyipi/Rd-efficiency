@@ -4,22 +4,25 @@
 
 | 文件 | 说明 |
 |------|------|
-| `map-sql-generator-*.jar` | 应用（不含 `application.yml`） |
+| `dev-efficiency-*.jar` | 应用（不含 `application.yml`） |
 | `application.yml` | 外挂配置（端口、数据源、`mig.standard-db-path` 等） |
-| `data-standard.db` | SQLite（数标 / 错误码 / MQ 配置）；可不预置，首次启动自动创建建表 |
-| `start.sh` / `start.bat` | 在本目录启动（保证相对路径正确） |
+| `data-standard.db` | SQLite（数标 / 错误码 / MQ 配置）；可不预置，首次启动自动建表 |
+| `start.sh` | 启动脚本（前台 / 后台，日志目录可配） |
 
 ## 启动
 
 ```bash
-# Linux / macOS
+# 前台
 ./start.sh
 
-# Windows
-start.bat
+# 后台（日志默认 ../logs/dev-efficiency.log）
+./start.sh -d
 
-# 或手动（须在本目录执行）
-java -jar map-sql-generator-1.0.0-SNAPSHOT.jar
+# 指定日志目录
+./start.sh -d -l /var/log/dev-efficiency
+
+# 透传 Spring 参数
+./start.sh -d -- --server.port=8081
 ```
 
 浏览器：http://localhost:8080

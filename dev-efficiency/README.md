@@ -1,4 +1,4 @@
-# 研发效能工具（map-sql-generator）
+# 研发效能工具（dev-efficiency）
 
 本机研发效能套件（Spring Boot），当前包含：
 
@@ -9,13 +9,16 @@
 5. **多环境数据库一致比对**：左库基线对齐右库 DDL + 数标规则
 6. **错误码标准参考**：厂商错误码映射银行规范码入库 SQLite，按分类筛选 + 错误码/说明模糊查询
 7. **IBM MQ 快速消费**：网页配置 IP/端口/队列管理器/通道/来账·往账队列（SQLite），选定后开始/停止持续消费
+8. **CNCCQ 快速消费**：同来账/往账模型，无通道；依赖本地介质 `lib/cnccq-jms-base-V2.0.5.0.jar`（`mvn validate` 或 `lib/install-cnccq.sh` 装入本地仓）
 
 要求：**JDK 8+**（工程按 1.8 编译；Spring Boot 2.7.18）。
 
 ## 启动 Web（开发）
 
 ```bash
-cd map-sql-generator
+cd dev-efficiency
+# 首次需装 CNCCQ 介质到本地仓（亦可依赖 validate 阶段自动 install-file）
+./lib/install-cnccq.sh
 mvn spring-boot:run
 ```
 
@@ -26,7 +29,7 @@ mvn spring-boot:run
 ## 打包运行（外挂配置 + SQLite）
 
 ```bash
-cd map-sql-generator
+cd dev-efficiency
 mvn -DskipTests package
 ```
 
@@ -34,21 +37,22 @@ mvn -DskipTests package
 
 | 文件 | 说明 |
 |------|------|
-| `map-sql-generator-*.jar` | 可执行胖 jar（**不含** `application.yml`） |
+| `dev-efficiency-*.jar` | 可执行胖 jar（**不含** `application.yml`） |
 | `application.yml` | 外挂配置，与 jar 同目录；改端口/数据源后重启即可 |
 | `data-standard.db` | 由 `mig.standard-db-path` 指定，默认 `./data-standard.db`；可不预置，首次启动自动建表 |
-| `start.sh` / `start.bat` | 在本目录启动，保证相对路径生效 |
+| `start.sh` | 启动脚本：`-d` 后台，`-l` 指定日志目录（默认 `../logs`） |
 
 ```bash
 cd target/dist
-./start.sh
-# 或: java -jar map-sql-generator-1.0.0-SNAPSHOT.jar
+./start.sh              # 前台
+./start.sh -d           # 后台 → ../logs/dev-efficiency.log
+./start.sh -d -l /var/log/mig
 ```
 
 Spring Boot 会自动加载同目录 `application.yml`。也可显式指定：
 
 ```bash
-java -jar map-sql-generator-1.0.0-SNAPSHOT.jar \
+java -jar dev-efficiency-1.0.0-SNAPSHOT.jar \
   --spring.config.additional-location=file:./application.yml \
   --mig.standard-db-path=./data-standard.db
 ```
@@ -74,7 +78,7 @@ java -jar map-sql-generator-1.0.0-SNAPSHOT.jar \
 - 类型不同 → 自动转换（如 `VARCHAR2`→`NUMBER`）
 - 字符型源长 > 目标长 → `SUBSTR`
 - 「库表关联条件」解析进 `WHERE`，并支持 `LEFT JOIN` / `INNER JOIN`（含 `select * from … inner join …` 同格写法）
-- 时间条件保留 `{{beginTm}}` / `{{endTm}}` / `{{tmColumn}}`
+- 时间列：Excel 备注含 `{{时间分区}}` 的行取其**源表栏位**写入 SQL；无标记则不拼时间区间
 
 跳板机：**sqlplus** 导出 `.dat` + `.ctl`（`export_*.sh`），**sqlldr** 装载（`load_*.sh`）。编辑 `scripts/export-job.conf`（含 `tgtConnect`）。说明见 `scripts/README.md` 与 `docs/map-sql-generator-design.md` §7。
 
@@ -97,91 +101,12 @@ API：`POST /api/generate-test`（请求体与 `/api/generate` 相同）
 1. 在 `application.yml` 配置 `mig.datasources`，将目标库 `enabled: true`
 2. 打开「目标库与Excel一致比对」：选择数据源，上传 V0.4 映射 Excel，下载标注结果
 3. 规则（以库为准，对齐 Excel **左侧目标栏位**）：
-   - 数据类型/长度不同 → 改写并 **黄色** 标注
-   - 库有、Excel 无 → **追加**行（备注 `【DB新增】`）
-   - Excel 有、库无 → **红色** 标注，备注提醒人工删除
-4. 汇总见结果文件中的 `_DB_EXCEL_DIFF` Sheet
-
-API：`GET /api/datasources`、`POST /api/datasources/test`、`POST /api/excel-db-diff`
+   - 类型/长度不一致 → 标黄并改写 Excel 类型/长度为目标库值
+   - 库有、Excel 无 → 在 Sheet 末追加行（仅填目标栏位）
+   - Excel 有、库无 → 该行标红
 
 ---
 
-## 工具 3：落标一致比对
+## 工具 3 / 4 / 5 / 6
 
-按 SQLite 数标规则扫描 OceanBase（Oracle 模式）基表，生成 ALTER SQL。
-
-规则类型：
-
-- `TYPE`：按数据类型族匹配，如 `CHAR` → `VARCHAR2({n})`，`CLOB` → `VARCHAR2(400)`（`{n}`/`{p}`/`{s}` 取自当前列）
-- `COLUMN`：字段名全匹配（忽略大小写），如 `AMOUNT` → `NUMBER(22,2)`
-
-CHAR / CLOB / NUMBER 等不能直接 `MODIFY` 时，生成**四步重建**：
-
-1. `ALTER TABLE ... ADD (col_MIGTMP ...)`
-2. `COMMENT ON COLUMN ...`（复制原 comment）
-3. `UPDATE ... SET col_MIGTMP = ...`（拷贝原始值）
-4. `DROP COLUMN` 旧字段 + `RENAME COLUMN` 临时字段改回原名
-
-### 配置
-
-```yaml
-mig:
-  standard-db-path: ./data-standard.db   # 打包运行时放在 jar 同目录
-```
-
-首次启动自动建表并写入默认规则（CHAR / CLOB / AMOUNT）。
-
-### API
-
-- `GET/POST/PUT/DELETE /api/standard/rules`
-- `POST /api/standard/scan` — `{ "datasourceId": "..." }` → 命中列表 + SQL 文本
-- `POST /api/standard/scan/export` — 下载 `.sql`
-
----
-
-## 工具 5：错误码标准参考
-
-将 `docs/厂商错误码映射银行规范错误码表.xlsx`（内置副本 `classpath:errorcode/error-code-standard.xlsx`）导入 SQLite 表 `error_code_standard`（与数标共用 `mig.standard-db-path`）。
-
-### 页面用法
-
-1. 打开「错误码标准参考」
-2. 按分类（业务类1 / 系统类2 / 结果未知类3）筛选
-3. 「错误码」模糊匹配完整错误码、厂商原码、常量名；「错误说明」模糊匹配银行错误说明
-
-### API
-
-- `GET /api/errorcode/summary` — 合计与分类统计
-- `GET /api/errorcode/categories` — 分类列表
-- `GET /api/errorcode?category=&code=&message=` — 查询
-
----
-
-## 工具 6：IBM MQ 快速消费
-
-在页面维护多套 IBM MQ 客户端连接（与数标共用 `mig.standard-db-path` SQLite 表 `mq_endpoint_config`）：
-
-| 字段 | 说明 |
-|------|------|
-| IP / 端口 | 队列管理器监听地址 |
-| 队列管理器 | Queue Manager 名 |
-| 通道 | 客户端通道（如 `*.SVRCONN`） |
-| 来账队列 / 往账队列 | 至少填一项 |
-| 用户名 / 密码 | 可选 |
-
-### 页面用法
-
-1. 填写并保存配置
-2. 在列表中「选用」，选消费侧（来账 / 往账 / 两者）
-3. 「测试连接」校验可达；「开始消费」后台 MQGET；「停止消费」断开
-
-消息预览保留最近约 200 条（含级别 / 队列 / MessageId / 正文截断）。
-
-### API
-
-- `GET/POST /api/mq/configs`、`PUT/DELETE /api/mq/configs/{id}`
-- `POST /api/mq/configs/{id}/test`
-- `GET /api/mq/configs/{id}/depth?side=BOTH|INBOUND|OUTBOUND` — 查询队列积压（CURDEPTH，不消费）
-- `POST /api/mq/consume/start` — `{ "configId": 1, "side": "BOTH|INBOUND|OUTBOUND" }`
-- `POST /api/mq/consume/stop`
-- `GET /api/mq/consume/status`
+见页面左侧菜单；数标、错误码、IBM MQ / CNCCQ 配置落在 `mig.standard-db-path` 指向的 SQLite。

@@ -6,8 +6,14 @@ set -euo pipefail
 
 BEGIN_TM="${1:?beginTm required}"
 END_TM="${2:?endTm required}"
-TM_COLUMN="${3-TRANDATE}"
-TABLE_NAME="${4:-IBPS_PAYMENTINIT}"
+# 时间列已写入 SQL（生成器 yml）；此处只替换 begin/end。兼容旧 4 参：begin end tmColumn table
+if [[ "${#}" -ge 4 ]]; then
+  TABLE_NAME="${4}"
+elif [[ "${#}" -eq 3 ]]; then
+  TABLE_NAME="${3}"
+else
+  TABLE_NAME="IBPS_PAYMENTINIT"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${SCRIPT_DIR}/export-job.conf"
@@ -162,12 +168,6 @@ OUT_CTL="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.ctl"
 OUT_LOG="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.log"
 OUT_BAD="${OUT_DIR}/${TABLE_NAME}_${BEGIN_TM}_${END_TM}.bad"
 
-# 任意源表时间列均可；空值表示整表导出，不拼时间范围。
-if [[ -n "${TM_COLUMN}" && ! "${TM_COLUMN}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
-  echo "invalid tmColumn: ${TM_COLUMN} (need Oracle identifier)" >&2
-  exit 1
-fi
-
 if [[ ! -f "${TPL}" ]]; then
   echo "SQL template not found: ${TPL}" >&2
   exit 1
@@ -185,35 +185,14 @@ fi
 
 mkdir -p "${OUT_DIR}"
 
-if [[ -n "${TM_COLUMN}" ]]; then
-  sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
-      -e "s/{{endTm}}/${END_TM}/g" \
-      -e "s/{{tmColumn}}/${TM_COLUMN}/g" \
-      "${TPL}" > "${RUN_SQL}"
-else
-  # 兼容已生成的模板：删除时间谓词；若它原本占用 WHERE，则把后续业务 AND 改为 WHERE。
-  awk '
-    function has_time_placeholder(line) {
-      return line ~ /\{\{(beginTm|endTm|tmColumn|tmFormat)\}\}/
-    }
-    {
-      if (has_time_placeholder($0)) {
-        if ($0 ~ /^[[:space:]]*WHERE[[:space:]]/) {
-          removed_where = 1
-        }
-        next
-      }
-      if (removed_where && $0 ~ /^[[:space:]]*AND[[:space:]]/) {
-        sub(/AND/, "WHERE")
-        removed_where = 0
-      }
-      print
-    }
-  ' "${TPL}" > "${RUN_SQL}"
-fi
+# 时间列由生成器写入 SQL；此处只替换时间窗。若仍含 {{tmColumn}}，说明是旧模板，需重新生成。
+sed -e "s/{{beginTm}}/${BEGIN_TM}/g" \
+    -e "s/{{endTm}}/${END_TM}/g" \
+    -e "s/{{tmFormat}}/YYYYMMDDHH24MISS/g" \
+    "${TPL}" > "${RUN_SQL}"
 
-if grep -Eq '\{\{(beginTm|endTm|tmColumn|tmFormat)\}\}' "${RUN_SQL}"; then
-  echo "unresolved time placeholder in rendered SQL: ${TPL}" >&2
+if grep -Eq '\{\{(beginTm|endTm|tmColumn|tmFormat|srcTmColumn|tgtTmColumn)\}\}' "${RUN_SQL}"; then
+  echo "unresolved time placeholder in rendered SQL (regenerate map SQL from generator): ${TPL}" >&2
   exit 1
 fi
 
@@ -239,7 +218,10 @@ if [[ -n "${EXPORT_NUM_COLS_HDR}" ]]; then
     NUMBER_COLUMNS+=("${col}")
   done
 fi
-NUMBER_COLUMNS_CSV="$(IFS=','; printf '%s' "${NUMBER_COLUMNS[*]}")"
+NUMBER_COLUMNS_CSV=""
+if [[ ${#NUMBER_COLUMNS[@]} -gt 0 ]]; then
+  NUMBER_COLUMNS_CSV="$(IFS=','; printf '%s' "${NUMBER_COLUMNS[*]}")"
+fi
 
 # 直接改写原 SELECT 的顶层表达式，不增加外层查询，也不预声明列数。
 : > "${EXPORT_COLUMNS_FILE}"
@@ -278,19 +260,21 @@ if [[ ${#HEADER_COLUMNS[@]} -gt 0
   echo "  select (${#COLUMNS[@]}): ${COLUMNS[*]}" >&2
 fi
 
-for number_col in "${NUMBER_COLUMNS[@]}"; do
-  number_col_found=0
-  for col in "${COLUMNS[@]}"; do
-    if [[ "${number_col}" == "${col}" ]]; then
-      number_col_found=1
-      break
+if [[ ${#NUMBER_COLUMNS[@]} -gt 0 ]]; then
+  for number_col in "${NUMBER_COLUMNS[@]}"; do
+    number_col_found=0
+    for col in "${COLUMNS[@]}"; do
+      if [[ "${number_col}" == "${col}" ]]; then
+        number_col_found=1
+        break
+      fi
+    done
+    if [[ "${number_col_found}" -ne 1 ]]; then
+      echo "exportNumberColumns entry is not an actual SELECT alias in ${TPL}: ${number_col}" >&2
+      exit 1
     fi
   done
-  if [[ "${number_col_found}" -ne 1 ]]; then
-    echo "exportNumberColumns entry is not an actual SELECT alias in ${TPL}: ${number_col}" >&2
-    exit 1
-  fi
-done
+fi
 
 for col in "${COLUMNS[@]}"; do
   if [[ ! "${col}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then

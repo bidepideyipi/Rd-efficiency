@@ -22,6 +22,7 @@ class TestSqlRendererTest {
         table.setSheetName("IBPS_PAYMENTINIT");
         table.setTargetTable("IBPS_PAYMENTINIT");
         table.setSourceTable("A10TIBPSDETAILLOG");
+        table.setTimeColumn("TRANTIME");
         table.setSheetTitle("表名：x 主键：AGENTSERIALNO");
         table.setJoinPredicate("FUNCTION2 IN ('ibps.101.001.01')");
 
@@ -46,7 +47,9 @@ class TestSqlRendererTest {
         assertTrue(countSrc.contains("SUM(("));
         assertTrue(countSrc.contains("TO_NUMBER(TRIM(s.AMOUNT))"));
         assertTrue(countSrc.contains("{{beginTm}}"));
-        assertTrue(countSrc.contains("s.{{srcTmColumn}}"));
+        assertTrue(countSrc.contains("s.TRANTIME >="));
+        assertFalse(countSrc.contains("{{srcTmColumn}}"));
+        assertFalse(countSrc.contains("{{tmColumn}}"));
         assertTrue(countSrc.contains("A10TIBPSDETAILLOG"));
 
         String countTgt = bundle.getFiles().get("01_count_total_tgt.sql");

@@ -37,12 +37,29 @@ is_global_key() {
     connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrDirect)
       return 0 ;;
     files|tmColumn)
-      echo "config key '${1}' is removed; use tables section: 表名 = 时间列" >&2
+      echo "config key '${1}' is removed; tables 只列表面名，时间列见 SQL 头 -- tmColumn:" >&2
       exit 1 ;;
     *) return 1 ;;
   esac
 }
 
+read_tm_column_header() {
+  local sql_file="$1"
+  if [[ ! -f "${sql_file}" ]]; then
+    printf ''
+    return 0
+  fi
+  awk '
+    /^--[[:space:]]*tmColumn:/ {
+      sub(/^--[[:space:]]*tmColumn:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' "${sql_file}"
+}
+
+SQL_DIR=""
 OUT_DIR=""
 START=""
 END=""
@@ -50,13 +67,40 @@ INTERVAL=""
 ON_ERROR="stop"
 TABLES_SET=0
 RESOLVED_TABLES=()
-RESOLVED_HAS_TIME=()
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
   line="$(trim "${raw}")"
   if [[ -z "${line}" || "${line}" == \#* ]]; then
     continue
   fi
+
+  if [[ "${TABLES_SET}" -eq 1 ]]; then
+    if [[ "${line}" == *=* ]]; then
+      key="$(trim "${line%%=*}")"
+      val="$(trim "${line#*=}")"
+      if is_global_key "${key}"; then
+        TABLES_SET=0
+      else
+        table="${key%.sql}"
+        if [[ -z "${table}" || "${table}" == */* || "${table}" == *..* ]]; then
+          echo "invalid table name: ${key}" >&2
+          exit 1
+        fi
+        RESOLVED_TABLES+=("${table}")
+        continue
+      fi
+    else
+      table="$(trim "${line}")"
+      table="${table%.sql}"
+      if [[ -z "${table}" || "${table}" == */* || "${table}" == *..* ]]; then
+        echo "invalid table name: ${line}" >&2
+        exit 1
+      fi
+      RESOLVED_TABLES+=("${table}")
+      continue
+    fi
+  fi
+
   if [[ "${line}" != *=* ]]; then
     echo "unexpected config line (want key = value): ${line}" >&2
     exit 1
@@ -67,7 +111,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
 
   if is_global_key "${key}"; then
     case "${key}" in
-      sqlDir) TABLES_SET=0 ;;
+      sqlDir) SQL_DIR="${val}"; TABLES_SET=0 ;;
       outDir) OUT_DIR="${val}"; TABLES_SET=0 ;;
       start) START="${val}"; TABLES_SET=0 ;;
       end) END="${val}"; TABLES_SET=0 ;;
@@ -76,7 +120,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
       tables)
         TABLES_SET=1
         if [[ -n "${val}" ]]; then
-          echo "put table mappings on following lines, not on 'tables =' itself: ${val}" >&2
+          echo "put table names on following lines, not on 'tables =' itself: ${val}" >&2
           exit 1
         fi
         ;;
@@ -87,23 +131,8 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     continue
   fi
 
-  if [[ "${TABLES_SET}" -eq 1 ]]; then
-    table="$(trim "${key}")"
-    table="${table%.sql}"
-    if [[ -z "${table}" || "${table}" == */* || "${table}" == *..* ]]; then
-      echo "invalid table name: ${key}" >&2
-      exit 1
-    fi
-    RESOLVED_TABLES+=("${table}")
-    if [[ -z "$(trim "${val}")" ]]; then
-      RESOLVED_HAS_TIME+=(0)
-    else
-      RESOLVED_HAS_TIME+=(1)
-    fi
-  else
-    echo "unknown config key: ${key}" >&2
-    exit 1
-  fi
+  echo "unknown config key: ${key}" >&2
+  exit 1
 done < "${CONF}"
 
 if [[ -z "${OUT_DIR}" ]]; then
@@ -195,9 +224,13 @@ else
     exit 1
   fi
 
-  for i in "${!RESOLVED_TABLES[@]}"; do
-    table="${RESOLVED_TABLES[$i]}"
-    if [[ "${RESOLVED_HAS_TIME[$i]}" -eq 0 ]]; then
+  if [[ -z "${SQL_DIR}" ]]; then
+    echo "export-manifest not found; sqlDir is required to read -- tmColumn: (${CONF})" >&2
+    exit 1
+  fi
+  for table in "${RESOLVED_TABLES[@]}"; do
+    col="$(read_tm_column_header "${SQL_DIR}/${table}.sql")"
+    if [[ -z "${col}" ]]; then
       ctl="${OUT_DIR}/${table}_${START}_${END}.ctl"
       if [[ -f "${ctl}" ]]; then
         JOBS+=("${table}|${START}|${END}")

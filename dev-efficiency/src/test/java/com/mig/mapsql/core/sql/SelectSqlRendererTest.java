@@ -19,6 +19,7 @@ class SelectSqlRendererTest {
         table.setSheetName("IBPS_PAYMENTINIT");
         table.setTargetTable("IBPS_PAYMENTINIT");
         table.setSourceTable("A10TIBPSDETAILLOG");
+        table.setTimeColumn("TRANTIME");
         table.setJoinPredicate("FUNCTION2 IN ('ibps.101.001.01')");
 
         FieldMapping direct = field("AGENTSERIALNO", MappingType.DIRECT, "TRACE", "VARCHAR2", "16", "VARCHAR2", "22", null);
@@ -50,8 +51,11 @@ class SelectSqlRendererTest {
         assertTrue(!sql.contains("WORKDATE"));
         assertTrue(sql.contains("{{beginTm}}"));
         assertTrue(sql.contains("{{endTm}}"));
-        assertTrue(sql.contains("{{tmColumn}}"));
+        assertTrue(sql.contains("s.TRANTIME >="));
+        assertTrue(!sql.contains("{{tmColumn}}"));
+        assertTrue(sql.contains("-- tmColumn: TRANTIME"));
         assertTrue(sql.contains("FUNCTION2 IN ('ibps.101.001.01')"));
+
         // 栏位说明为行尾注释，而非独立 -- 行
         assertTrue(sql.contains("AS AGENTSERIALNO,  -- 1 AGENTSERIALNO 01-直接迁移"));
         assertTrue(!sql.matches("(?s).*\\n\\s*-- 1 AGENTSERIALNO.*\\n\\s*\\(s\\.TRACE\\).*"));
@@ -117,8 +121,29 @@ class SelectSqlRendererTest {
         assertTrue(!sql.contains("WHERE"));
         assertTrue(!sql.contains("{{tmColumn}}"));
         assertTrue(!sql.contains("{{beginTm}}"));
+        assertTrue(sql.contains("-- tmColumn: "));
         assertTrue(!sql.toLowerCase().contains("select * from"));
         assertTrue(sql.contains("-- exportNumberColumns: "));
+    }
+
+    @Test
+    void emptyTimeColumnKeepsBizWhereWithoutTimeShard() {
+        GeneratorProperties props = new GeneratorProperties();
+        SelectSqlRenderer renderer = new SelectSqlRenderer(props);
+
+        TableMapping table = new TableMapping();
+        table.setSheetName("IBPS_PAYMENTINIT");
+        table.setTargetTable("IBPS_PAYMENTINIT");
+        table.setSourceTable("A10TIBPSDETAILLOG");
+        table.setTimeColumn("");
+        table.setJoinPredicate("FUNCTION2 IN ('ibps.101.001.01')");
+        table.getFields().add(field("ID", MappingType.DIRECT, "ID", "VARCHAR2", "32", "VARCHAR2", "32", null));
+
+        String sql = renderer.render(table);
+        assertTrue(sql.contains("WHERE (\n    FUNCTION2 IN ('ibps.101.001.01')\n  )"));
+        assertTrue(!sql.contains("{{beginTm}}"));
+        assertTrue(!sql.contains("TRANTIME"));
+        assertTrue(sql.contains("-- tmColumn: "));
     }
 
     private static FieldMapping field(String tgt, MappingType type, String src,

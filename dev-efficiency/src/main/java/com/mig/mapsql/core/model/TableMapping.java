@@ -16,6 +16,10 @@ public class TableMapping {
     private String sourceSystem;
     /** 主表 WHERE 谓词（不含时间窗） */
     private String joinPredicate;
+    /**
+     * 源表时间过滤列（Excel 备注含 {{时间分区}} 的行解析）；空表示不拼时间区间。
+     */
+    private String timeColumn;
     private String joinConditionRaw;
     private boolean whereConflict;
     private boolean leftJoinConflict;
@@ -76,6 +80,14 @@ public class TableMapping {
 
     public void setJoinPredicate(String joinPredicate) {
         this.joinPredicate = joinPredicate;
+    }
+
+    public String getTimeColumn() {
+        return timeColumn;
+    }
+
+    public void setTimeColumn(String timeColumn) {
+        this.timeColumn = timeColumn;
     }
 
     public String getWherePredicate() {

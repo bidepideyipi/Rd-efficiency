@@ -20,6 +20,7 @@ mig:
   join-condition-conflict: error
   require-sql-rule-when-present: false
   write-meta: true
+  # 时间过滤列：由 Excel 备注 {{时间分区}} 标记，不再在此配置
   # 数据标准 / 错误码 / MQ 配置（SQLite）。打包运行时与 jar 同目录的 ./data-standard.db
   standard-db-path: ./data-standard.db
   # OceanBase 数据源（库↔Excel 对比 / 数标扫描）。密码勿提交仓库。

@@ -264,6 +264,7 @@
     <button type="button" class="tool" data-tool="dbdb">多环境数据库一致比对</button>
     <button type="button" class="tool" data-tool="errorcode">错误码标准参考</button>
     <button type="button" class="tool" data-tool="mq">IBM MQ 快速消费</button>
+    <button type="button" class="tool" data-tool="cnccq">CNCCQ 快速消费</button>
   </nav>
   <main>
     <section id="panel-sql" class="panel active">
@@ -627,6 +628,112 @@
       </section>
     </section>
 
+    <section id="panel-cnccq" class="panel">
+      <h1>CNCCQ 快速消费 <span class="pill">来账 / 往账</span></h1>
+      <p class="sub">配置 IP、端口、队列管理器与来/往账队列（无通道），保存至 SQLite；选定配置后可开始/停止持续消费，消息预览显示于下方。</p>
+
+      <section class="card">
+        <label>连接配置</label>
+        <input type="hidden" id="cnccqId"/>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>名称</label>
+            <input id="cnccqName" type="text" placeholder="如 yl1-支付CNCCQ"/>
+          </div>
+          <div>
+            <label>IP / 主机</label>
+            <input id="cnccqHost" type="text" placeholder="10.x.x.x"/>
+          </div>
+          <div>
+            <label>端口</label>
+            <input id="cnccqPort" type="number" value="1414" min="1" max="65535"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>队列管理器</label>
+            <input id="cnccqQm" type="text" placeholder="QM.NAME"/>
+          </div>
+          <div>
+            <label>TCP 超时(ms)</label>
+            <input id="cnccqTcpWait" type="number" value="60000" min="1000"/>
+          </div>
+          <div>
+            <label>连接池大小</label>
+            <input id="cnccqPool" type="number" value="2" min="1" max="32"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>来账队列</label>
+            <input id="cnccqInbound" type="text" placeholder="可选，与往账至少填一项"/>
+          </div>
+          <div>
+            <label>往账队列</label>
+            <input id="cnccqOutbound" type="text" placeholder="可选，与来账至少填一项"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>用户名（可选）</label>
+            <input id="cnccqUser" type="text" placeholder="无鉴权可留空"/>
+          </div>
+          <div>
+            <label>密码（可选）</label>
+            <input id="cnccqPass" type="password" placeholder="无鉴权可留空" autocomplete="off"/>
+          </div>
+          <div>
+            <label>备注</label>
+            <input id="cnccqRemark" type="text" placeholder="可选"/>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnCnccqSave">保存配置</button>
+          <button class="secondary" type="button" id="btnCnccqReset">清空表单</button>
+        </div>
+        <p id="cnccqFormStatus" class="sub" style="margin:8px 0 0"></p>
+      </section>
+
+      <section class="card">
+        <label>已保存配置</label>
+        <div class="table-wrap" id="cnccqConfigWrap" style="margin-top:8px">
+          <em style="color:#5b6775;display:block;padding:12px">加载中…</em>
+        </div>
+      </section>
+
+      <section class="card">
+        <label>消费控制</label>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>选用配置</label>
+            <select id="cnccqSelect">
+              <option value="">请选择…</option>
+            </select>
+          </div>
+          <div>
+            <label>消费侧</label>
+            <select id="cnccqSide">
+              <option value="BOTH">来账 + 往账</option>
+              <option value="INBOUND">仅来账</option>
+              <option value="OUTBOUND">仅往账</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
+          <button type="button" id="btnCnccqTest">测试连接</button>
+          <button class="secondary" type="button" id="btnCnccqDepth">查询积压</button>
+          <button type="button" id="btnCnccqStart">开始消费</button>
+          <button class="danger" type="button" id="btnCnccqStop" disabled>停止消费</button>
+          <button class="secondary" type="button" id="btnCnccqClearLog">清空日志</button>
+        </div>
+        <div class="summary" id="cnccqSummary" style="margin-top:12px"></div>
+        <div class="summary" id="cnccqDepthSummary" style="margin-top:4px"></div>
+        <p id="cnccqRunStatus" class="sub" style="margin:0 0 8px"></p>
+        <label>消息 / 事件</label>
+        <pre id="cnccqLog">等待操作…</pre>
+      </section>
+    </section>
+
   </main>
 </div>
 <script>
@@ -641,11 +748,18 @@
       document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
       $('panel-' + tool).classList.add('active');
       if (tool === 'mq') {
+        stopCnccqPoll();
         loadMqConfigs();
         pollMqStatus();
         startMqPoll();
+      } else if (tool === 'cnccq') {
+        stopMqPoll();
+        loadCnccqConfigs();
+        pollCnccqStatus();
+        startCnccqPoll();
       } else {
         stopMqPoll();
+        stopCnccqPoll();
       }
     });
   });
@@ -1616,7 +1730,294 @@
     resetMqForm();
   }
 
-  Promise.all([initSql(), initDiff(), initStandard(), initDbdb(), initErrorCode(), initMq()]).catch(e => {
+  let cnccqConfigs = [];
+  let cnccqPollTimer = null;
+  let cnccqLogCleared = false;
+
+  function cnccqEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function resetCnccqForm() {
+    $('cnccqId').value = '';
+    $('cnccqName').value = '';
+    $('cnccqHost').value = '';
+    $('cnccqPort').value = '1414';
+    $('cnccqQm').value = '';
+    $('cnccqTcpWait').value = '60000';
+    $('cnccqPool').value = '2';
+    $('cnccqInbound').value = '';
+    $('cnccqOutbound').value = '';
+    $('cnccqUser').value = '';
+    $('cnccqPass').value = '';
+    $('cnccqRemark').value = '';
+    $('cnccqFormStatus').textContent = '';
+  }
+
+  function fillCnccqForm(cfg) {
+    $('cnccqId').value = cfg.id || '';
+    $('cnccqName').value = cfg.name || '';
+    $('cnccqHost').value = cfg.host || '';
+    $('cnccqPort').value = cfg.port || 1414;
+    $('cnccqQm').value = cfg.queueManager || '';
+    $('cnccqTcpWait').value = cfg.tcpWaitTimeMs != null ? cfg.tcpWaitTimeMs : 60000;
+    $('cnccqPool').value = cfg.poolSize != null ? cfg.poolSize : 2;
+    $('cnccqInbound').value = cfg.inboundQueue || '';
+    $('cnccqOutbound').value = cfg.outboundQueue || '';
+    $('cnccqUser').value = cfg.username || '';
+    $('cnccqPass').value = cfg.password || '';
+    $('cnccqRemark').value = cfg.remark || '';
+    $('cnccqFormStatus').innerHTML = '<span class="ok">已载入配置 #' + cfg.id + '，修改后点保存</span>';
+  }
+
+  function readCnccqForm() {
+    return {
+      name: $('cnccqName').value.trim(),
+      host: $('cnccqHost').value.trim(),
+      port: Number($('cnccqPort').value || 1414),
+      queueManager: $('cnccqQm').value.trim(),
+      inboundQueue: $('cnccqInbound').value.trim(),
+      outboundQueue: $('cnccqOutbound').value.trim(),
+      username: $('cnccqUser').value.trim(),
+      password: $('cnccqPass').value,
+      tcpWaitTimeMs: Number($('cnccqTcpWait').value || 60000),
+      poolSize: Number($('cnccqPool').value || 2),
+      remark: $('cnccqRemark').value.trim()
+    };
+  }
+
+  function renderCnccqConfigs() {
+    const sel = $('cnccqSelect');
+    const prev = sel.value;
+    if (!cnccqConfigs.length) {
+      sel.innerHTML = '<option value="">暂无配置</option>';
+      $('cnccqConfigWrap').innerHTML = '<em style="color:#5b6775;display:block;padding:12px">暂无配置，请先保存</em>';
+      return;
+    }
+    sel.innerHTML = cnccqConfigs.map(c =>
+      '<option value="' + c.id + '">' + cnccqEsc(c.name) + ' — ' + cnccqEsc(c.host) + ':' + c.port + '</option>'
+    ).join('');
+    if (prev && cnccqConfigs.some(c => String(c.id) === String(prev))) {
+      sel.value = prev;
+    }
+    let html = '<table class="data"><thead><tr>' +
+      '<th>名称</th><th>主机</th><th>QM</th><th>来账</th><th>往账</th><th>池/超时</th><th></th>' +
+      '</tr></thead><tbody>';
+    cnccqConfigs.forEach(c => {
+      html += '<tr>' +
+        '<td>' + cnccqEsc(c.name) + '</td>' +
+        '<td><code>' + cnccqEsc(c.host) + ':' + c.port + '</code></td>' +
+        '<td><code>' + cnccqEsc(c.queueManager) + '</code></td>' +
+        '<td><code>' + cnccqEsc(c.inboundQueue) + '</code></td>' +
+        '<td><code>' + cnccqEsc(c.outboundQueue) + '</code></td>' +
+        '<td><code>' + (c.poolSize || 2) + ' / ' + (c.tcpWaitTimeMs || 60000) + 'ms</code></td>' +
+        '<td style="white-space:nowrap">' +
+          '<button type="button" class="secondary" data-cnccq-edit="' + c.id + '" style="padding:4px 8px;margin-right:4px">编辑</button>' +
+          '<button type="button" class="secondary" data-cnccq-use="' + c.id + '" style="padding:4px 8px;margin-right:4px">选用</button>' +
+          '<button type="button" class="danger" data-cnccq-del="' + c.id + '" style="padding:4px 8px">删除</button>' +
+        '</td></tr>';
+    });
+    html += '</tbody></table>';
+    $('cnccqConfigWrap').innerHTML = html;
+    $('cnccqConfigWrap').querySelectorAll('[data-cnccq-edit]').forEach(btn => {
+      btn.onclick = () => {
+        const cfg = cnccqConfigs.find(x => String(x.id) === btn.getAttribute('data-cnccq-edit'));
+        if (cfg) fillCnccqForm(cfg);
+      };
+    });
+    $('cnccqConfigWrap').querySelectorAll('[data-cnccq-use]').forEach(btn => {
+      btn.onclick = () => { $('cnccqSelect').value = btn.getAttribute('data-cnccq-use'); };
+    });
+    $('cnccqConfigWrap').querySelectorAll('[data-cnccq-del]').forEach(btn => {
+      btn.onclick = () => deleteCnccqConfig(btn.getAttribute('data-cnccq-del'));
+    });
+  }
+
+  async function loadCnccqConfigs() {
+    const res = await fetch('/api/cnccq/configs');
+    const data = await res.json().catch(() => ([]));
+    if (!res.ok) {
+      $('cnccqConfigWrap').innerHTML = '<span class="err">' + cnccqEsc(data.error || '加载失败') + '</span>';
+      return;
+    }
+    cnccqConfigs = Array.isArray(data) ? data : [];
+    renderCnccqConfigs();
+  }
+
+  async function saveCnccqConfig() {
+    const body = readCnccqForm();
+    const id = $('cnccqId').value;
+    const url = id ? '/api/cnccq/configs/' + id : '/api/cnccq/configs';
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('cnccqFormStatus').innerHTML = '<span class="err">' + cnccqEsc(data.error || '保存失败') + '</span>';
+      return;
+    }
+    $('cnccqFormStatus').innerHTML = '<span class="ok">已保存 #' + data.id + '</span>';
+    $('cnccqId').value = data.id;
+    await loadCnccqConfigs();
+    $('cnccqSelect').value = String(data.id);
+  }
+
+  async function deleteCnccqConfig(id) {
+    if (!confirm('确认删除配置 #' + id + '？')) return;
+    const res = await fetch('/api/cnccq/configs/' + id, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || '删除失败');
+      return;
+    }
+    if (String($('cnccqId').value) === String(id)) resetCnccqForm();
+    await loadCnccqConfigs();
+  }
+
+  function startCnccqPoll() {
+    stopCnccqPoll();
+    cnccqPollTimer = setInterval(() => { pollCnccqStatus().catch(() => {}); }, 1500);
+  }
+
+  function stopCnccqPoll() {
+    if (cnccqPollTimer) {
+      clearInterval(cnccqPollTimer);
+      cnccqPollTimer = null;
+    }
+  }
+
+  function renderCnccqStatus(data) {
+    const running = !!data.running;
+    $('btnCnccqStart').disabled = running;
+    $('btnCnccqStop').disabled = !running;
+    const sideLabel = { BOTH: '来账+往账', INBOUND: '来账', OUTBOUND: '往账' }[data.side] || (data.side || '-');
+    $('cnccqSummary').innerHTML =
+      '<span>状态 <strong>' + (running ? '消费中' : '空闲') + '</strong></span>' +
+      '<span>配置 <strong>' + cnccqEsc(data.configName || '-') + '</strong>' +
+        (data.configId ? ' (#' + data.configId + ')' : '') + '</span>' +
+      '<span>侧 <strong>' + cnccqEsc(sideLabel) + '</strong></span>' +
+      '<span>累计消息 <strong>' + (data.consumedTotal || 0) + '</strong></span>' +
+      (data.startedAt ? '<span>开始于 <strong>' + cnccqEsc(data.startedAt) + '</strong></span>' : '');
+    if (data.lastError) {
+      $('cnccqRunStatus').innerHTML = '<span class="err">最近错误：' + cnccqEsc(data.lastError) + '</span>';
+    } else if (running) {
+      $('cnccqRunStatus').innerHTML = '<span class="ok">正在连接并消费…</span>';
+    } else {
+      $('cnccqRunStatus').textContent = '';
+    }
+    if (cnccqLogCleared && !(data.recent || []).length) {
+      return;
+    }
+    cnccqLogCleared = false;
+    const lines = (data.recent || []).slice().reverse().map(r => {
+      const head = '[' + (r.time || '') + '] ' + (r.level || '') +
+        (r.queue ? ' ' + r.queue : '') +
+        (r.messageId ? ' ' + r.messageId : '');
+      return head + '\n' + (r.body || '');
+    });
+    $('cnccqLog').textContent = lines.length ? lines.join('\n\n---\n\n') : '暂无消息';
+  }
+
+  async function pollCnccqStatus() {
+    const res = await fetch('/api/cnccq/consume/status');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    renderCnccqStatus(data);
+  }
+
+  async function selectedCnccqId() {
+    const id = $('cnccqSelect').value;
+    if (!id) {
+      alert('请先选择配置');
+      return null;
+    }
+    return Number(id);
+  }
+
+  $('btnCnccqReset').onclick = () => resetCnccqForm();
+  $('btnCnccqSave').onclick = () => saveCnccqConfig().catch(e => {
+    $('cnccqFormStatus').innerHTML = '<span class="err">' + cnccqEsc(e.message) + '</span>';
+  });
+  $('btnCnccqClearLog').onclick = () => {
+    cnccqLogCleared = true;
+    $('cnccqLog').textContent = '（已清空本地显示；后台仍在累计）';
+  };
+
+  $('btnCnccqTest').onclick = async () => {
+    const id = await selectedCnccqId();
+    if (id == null) return;
+    $('cnccqRunStatus').textContent = '测试连接中…';
+    const res = await fetch('/api/cnccq/configs/' + id + '/test', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('cnccqRunStatus').innerHTML = '<span class="err">' + cnccqEsc(data.error || '连接失败') + '</span>';
+      return;
+    }
+    $('cnccqRunStatus').innerHTML = '<span class="ok">' + cnccqEsc(data.message || '连接成功') + '</span>';
+  };
+
+  $('btnCnccqDepth').onclick = async () => {
+    const id = await selectedCnccqId();
+    if (id == null) return;
+    $('cnccqRunStatus').textContent = '查询积压中…';
+    const side = encodeURIComponent($('cnccqSide').value || 'BOTH');
+    const res = await fetch('/api/cnccq/configs/' + id + '/depth?side=' + side);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('cnccqDepthSummary').innerHTML = '';
+      $('cnccqRunStatus').innerHTML = '<span class="err">' + cnccqEsc(data.error || '查询失败') + '</span>';
+      return;
+    }
+    const parts = (data.queues || []).map(q => {
+      if (q.ok === false) {
+        return '<span><code>' + cnccqEsc(q.queue) + '</code> <span class="err">' + cnccqEsc(q.error || '失败') + '</span></span>';
+      }
+      return '<span><code>' + cnccqEsc(q.queue) + '</code> 积压 <strong>' + q.currentDepth + '</strong></span>';
+    });
+    $('cnccqDepthSummary').innerHTML =
+      '<span>合计积压 <strong>' + (data.totalDepth != null ? data.totalDepth : '-') + '</strong></span>' +
+      parts.join('') +
+      (data.inquiredAt ? '<span>' + cnccqEsc(data.inquiredAt) + '</span>' : '');
+    $('cnccqRunStatus').innerHTML = '<span class="ok">积压已刷新（getMessageCount，未取消息）</span>';
+  };
+
+  $('btnCnccqStart').onclick = async () => {
+    const id = await selectedCnccqId();
+    if (id == null) return;
+    cnccqLogCleared = false;
+    const res = await fetch('/api/cnccq/consume/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ configId: id, side: $('cnccqSide').value })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('cnccqRunStatus').innerHTML = '<span class="err">' + cnccqEsc(data.error || '启动失败') + '</span>';
+      return;
+    }
+    renderCnccqStatus(data);
+    startCnccqPoll();
+  };
+
+  $('btnCnccqStop').onclick = async () => {
+    const res = await fetch('/api/cnccq/consume/stop', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('cnccqRunStatus').innerHTML = '<span class="err">' + cnccqEsc(data.error || '停止失败') + '</span>';
+      return;
+    }
+    renderCnccqStatus(data);
+  };
+
+  async function initCnccq() {
+    resetCnccqForm();
+  }
+
+  Promise.all([initSql(), initDiff(), initStandard(), initDbdb(), initErrorCode(), initMq(), initCnccq()]).catch(e => {
     if ($('dirStatus')) $('dirStatus').textContent = e.message;
     if ($('dsStatus')) $('dsStatus').textContent = e.message;
     if ($('stdDsStatus')) $('stdDsStatus').textContent = e.message;

@@ -1,14 +1,14 @@
 #!/bin/bash
 # 按 export-job.conf 的 tables 串行调用 export_by_map.sh。
 # 不使用环境变量。时间窗左闭右开：[sliceBegin, sliceEnd)。
-# 配置时间列的表按时间片执行；时间列留空的表不拼时间条件，并在完整范围内只执行一次。
+# 时间列来自 SQL 头 -- tmColumn:（生成器 yml）；非空按月分片，空则整表只执行一次。
 #
 # 用法：
 #   ./export_batch.sh
 #       conf 的 start/end/interval × tables，按月分片
 #   ./export_batch.sh yyyyMMdd
 #       指定日 [D, D+1) × conf tables，不再分片
-#   ./export_batch.sh yyyyMMdd "tableName = tmColumn"
+#   ./export_batch.sh yyyyMMdd tableName
 #       指定日 + 指定表，不再批量、不再分片
 set -euo pipefail
 
@@ -39,7 +39,7 @@ if [[ ! -f "${ONE_SHOT}" ]]; then
 fi
 
 if [[ -n "${ONE_TABLE_SPEC}" && -z "${ONE_DAY}" ]]; then
-  echo "usage: $0 [yyyyMMdd [\"tableName = tmColumn\"]]" >&2
+  echo "usage: $0 [yyyyMMdd [tableName]]" >&2
   exit 1
 fi
 if [[ -n "${ONE_DAY}" && ! "${ONE_DAY}" =~ ^[0-9]{8}$ ]]; then
@@ -57,18 +57,10 @@ is_global_key() {
     connect|tgtConnect|ctlCharset|loadMode|sqlldrErrors|sqlldrDirect)
       return 0 ;;
     files|tmColumn)
-      echo "config key '${1}' is removed; use tables section: 表名 = 时间列" >&2
+      echo "config key '${1}' is removed; tables 只列表面名，时间列见 SQL 头 -- tmColumn:" >&2
       exit 1 ;;
     *) return 1 ;;
   esac
-}
-
-check_column() {
-  # 不限定列名集合；仅校验可嵌入 s.{{tmColumn}} 的标识符。
-  if [[ ! "$1" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
-    echo "invalid tmColumn: $1 (need Oracle identifier)" >&2
-    exit 1
-  fi
 }
 
 SQL_DIR=""
@@ -79,23 +71,29 @@ INTERVAL=""
 ON_ERROR="stop"
 TABLES_SET=0
 RESOLVED_TABLES=()
-RESOLVED_COLUMNS=()
 
-add_table_mapping() {
+add_table() {
   local table="$1"
-  local col="$2"
   table="$(trim "${table}")"
-  col="$(trim "${col}")"
   table="${table%.sql}"
   if [[ -z "${table}" || "${table}" == */* || "${table}" == *..* ]]; then
     echo "invalid table name: ${table}" >&2
     exit 1
   fi
-  if [[ -n "${col}" ]]; then
-    check_column "${col}"
-  fi
   RESOLVED_TABLES+=("${table}")
-  RESOLVED_COLUMNS+=("${col}")
+}
+
+# 从生成器写入的 "-- tmColumn: COL" 读取；空表示整表一次。
+read_tm_column_header() {
+  local sql_file="$1"
+  awk '
+    /^--[[:space:]]*tmColumn:/ {
+      sub(/^--[[:space:]]*tmColumn:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' "${sql_file}"
 }
 
 while IFS= read -r raw || [[ -n "${raw}" ]]; do
@@ -103,6 +101,27 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
   if [[ -z "${line}" || "${line}" == \#* ]]; then
     continue
   fi
+
+  # tables 段：每行一个表名；兼容旧写法「表名 =」或「表名 = 时间列」（时间列忽略）
+  if [[ "${TABLES_SET}" -eq 1 ]]; then
+    if [[ "${line}" == *=* ]]; then
+      key="$(trim "${line%%=*}")"
+      val="$(trim "${line#*=}")"
+      if is_global_key "${key}"; then
+        TABLES_SET=0
+      else
+        if [[ -n "${val}" ]]; then
+          echo "warning: ignore time column '${val}' for ${key}; use generator yml / SQL -- tmColumn:" >&2
+        fi
+        add_table "${key}"
+        continue
+      fi
+    else
+      add_table "${line}"
+      continue
+    fi
+  fi
+
   if [[ "${line}" != *=* ]]; then
     echo "unexpected config line (want key = value): ${line}" >&2
     exit 1
@@ -122,7 +141,7 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
       tables)
         TABLES_SET=1
         if [[ -n "${val}" ]]; then
-          echo "put table mappings on following lines, not on 'tables =' itself: ${val}" >&2
+          echo "put table names on following lines, not on 'tables =' itself: ${val}" >&2
           exit 1
         fi
         ;;
@@ -133,12 +152,8 @@ while IFS= read -r raw || [[ -n "${raw}" ]]; do
     continue
   fi
 
-  if [[ "${TABLES_SET}" -eq 1 ]]; then
-    add_table_mapping "${key}" "${val}"
-  else
-    echo "unknown config key: ${key}" >&2
-    exit 1
-  fi
+  echo "unknown config key: ${key}" >&2
+  exit 1
 done < "${CONF}"
 
 if [[ -z "${SQL_DIR}" || -z "${OUT_DIR}" ]]; then
@@ -223,15 +238,14 @@ else
 fi
 
 if [[ -n "${ONE_TABLE_SPEC}" ]]; then
-  if [[ "${ONE_TABLE_SPEC}" != *=* ]]; then
-    echo "invalid table spec: ${ONE_TABLE_SPEC} (want: tableName = tmColumn)" >&2
-    exit 1
+  # 兼容旧写法 "tableName = tmColumn"：只取左侧表名
+  if [[ "${ONE_TABLE_SPEC}" == *=* ]]; then
+    ONE_TABLE_SPEC="$(trim "${ONE_TABLE_SPEC%%=*}")"
   fi
   RESOLVED_TABLES=()
-  RESOLVED_COLUMNS=()
-  add_table_mapping "${ONE_TABLE_SPEC%%=*}" "${ONE_TABLE_SPEC#*=}"
+  add_table "${ONE_TABLE_SPEC}"
 elif [[ ${#RESOLVED_TABLES[@]} -eq 0 ]]; then
-  echo "tables section is required; each line: 表名 = 时间列（整表导出可留空）" >&2
+  echo "tables section is required; each line: 表名（时间列见 SQL -- tmColumn:）" >&2
   exit 1
 fi
 
@@ -261,10 +275,10 @@ run_export_slice() {
   dat="${OUT_DIR}/${table}_${begin}_${end}.dat"
   ctl="${OUT_DIR}/${table}_${begin}_${end}.ctl"
   slice_log="${OUT_DIR}/${table}_${begin}_${end}.log"
-  echo "${table} ${begin} ${end} ${col}"
+  echo "${table} ${begin} ${end} tmColumn=${col:-<none>}"
   tmp="$(mktemp)"
   set +e
-  "${ONE_SHOT}" "${begin}" "${end}" "${col}" "${table}" >"${tmp}" 2>&1
+  "${ONE_SHOT}" "${begin}" "${end}" "${table}" >"${tmp}" 2>&1
   rc=$?
   set -e
   cat "${tmp}"
@@ -275,7 +289,7 @@ run_export_slice() {
   fi
   printf '%s,%s,%s,%s,%s,FAIL\n' "${table}" "${begin}" "${end}" "${dat}" "${ctl}" >> "${MANIFEST}"
   {
-    echo "==== $(date '+%Y-%m-%d %H:%M:%S') FAIL table=${table} begin=${begin} end=${end} tmColumn=${col} rc=${rc} ===="
+    echo "==== $(date '+%Y-%m-%d %H:%M:%S') FAIL table=${table} begin=${begin} end=${end} tmColumn=${col:-<none>} rc=${rc} ===="
     if [[ -s "${tmp}" ]]; then
       echo "-- export_by_map output --"
       cat "${tmp}"
@@ -315,7 +329,11 @@ failed=0
 i=0
 while [[ "${i}" -lt ${#RESOLVED_TABLES[@]} ]]; do
   table="${RESOLVED_TABLES[$i]}"
-  col="${RESOLVED_COLUMNS[$i]}"
+  col="$(read_tm_column_header "${SQL_DIR}/${table}.sql")"
+  if [[ -n "${col}" && ! "${col}" =~ ^[A-Za-z][A-Za-z0-9_#$]*$ ]]; then
+    echo "invalid -- tmColumn: in ${SQL_DIR}/${table}.sql: ${col}" >&2
+    exit 1
+  fi
   if [[ "${SINGLE_SLICE}" -eq 1 || -z "${col}" ]]; then
     run_export_slice "${table}" "${START}" "${END}" "${col}"
   else
